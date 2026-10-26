@@ -1,5 +1,24 @@
 {
-  "id": "cn-20261013",
-  "imageSha256": "2cff32efe14b24ecbde8916bcccd63559379d3ba50dec4e9ca56faf89fc93f42",
-  "evidence": "Saved REA exact Lua G.net._asio_gate_client / inbound RC4 chain; bounded reads and schema alignment required"
+  "id": "cn-win64r-20261023",
+  "imageSha256": "4483a00721a7b08a21f3cfb666eb6a8858dacf2e3830956be98c569bac746d1b",
+  "note": "Top-level id/hash retained for already running v0.4 supervisor migration; readers select exact hash from builds. Never use default offsets for an unknown image.",
+  "builds": [
+    {
+      "id": "cn-win64rh-20261013",
+      "imageSha256": "2cff32efe14b24ecbde8916bcccd63559379d3ba50dec4e9ca56faf89fc93f42",
+      "offsets": { "luaRootRva": "0x836b748", "inboundWrapperVtableRva": "0x5b83bc8", "rc4VtableRva": "0x5b7ff98" },
+      "evidence": "Reference saved REA exact Lua G.net._asio_gate_client / inbound RC4 chain"
+    },
+    {
+      "id": "cn-win64r-20261023",
+      "imageSha256": "4483a00721a7b08a21f3cfb666eb6a8858dacf2e3830956be98c569bac746d1b",
+      "offsets": { "luaRootRva": "0x83754b8", "inboundWrapperVtableRva": "0x5b8ba68", "rc4VtableRva": "0x5b87e38" },
+      "codeGuards": [
+        { "rva": "0x1d9ad67", "bytes": "488d054aa75d06", "purpose": "main Lua runtime singleton address" },
+        { "rva": "0x3005126", "bytes": "488d050b2db802488bd9488901", "purpose": "RC4 object vtable assignment" },
+        { "rva": "0x3087b7a", "bytes": "488d05e73eb00248894310", "purpose": "inbound cipher wrapper vtable assignment" }
+      ],
+      "evidence": "User-run read-only main-module .text/.rdata snapshot on 2026-10-26; constructor, Lua singleton and RC4 state layout checked offline; live structure + unique wire alignment still mandatory"
+    }
+  ]
 }

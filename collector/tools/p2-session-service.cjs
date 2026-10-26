@@ -24,13 +24,25 @@ function run(exe,args,{input=null,timeout=60000}={}){return new Promise((resolve
 async function discover(){return JSON.parse((await run('powershell.exe',['-NoProfile','-ExecutionPolicy','Bypass','-File',path.join(__dirname,'p2-discover.ps1'),'-GameProcessId',String(binding.pid),'-ExpectedStart',binding.startedAt])).replace(/^\uFEFF/,''));}
 const key=m=>JSON.stringify([m.pid,m.processStartUtc,m.flows]);
 async function bootstrap(m){
- if(closing)throw Error('采集已停止');if(!m.flows?.length)throw Error('尚无游戏服务器连接，请进入角色');
- const profile=JSON.parse(fs.readFileSync(path.join(root,'config/client-build.json')));
- if(sha(fs.readFileSync(m.modulePath))!==profile.imageSha256)throw Error('客户端版本发生变化，当前解码配置不适用');
+ if(closing)throw Error('采集已停止');if(!m.flows?.length)throw Error(m.connectionCounts?.ipv6?'所选进程当前仅有 IPv6 连接，当前解析链尚不支持该连接类型':'所选进程暂未发现已建立的 TCP 连接；请确认所选实例仍在运行');
+ const profiles=JSON.parse(fs.readFileSync(path.join(root,'config/client-build.json')));
+ const imageHash=sha(fs.readFileSync(m.modulePath));
+ const profile=require('./client-profile.cjs').selectProfile(profiles,imageHash);
+ if(!profile){
+  // Keep the build mismatch distinct from routing: an accelerator connection
+  // has already been discovered, but unknown offsets must never be applied.
+  const variant=path.basename(path.dirname(m.modulePath));
+  const routing=m.flows.some(f=>f.loopback)?'（经过本地加速器/转发）':'';
+  const report={at:new Date().toISOString(),pid:m.pid,processStartUtc:m.processStartUtc,modulePath:m.modulePath,imageSha256:imageHash,supportedBuilds:(profiles.builds||[profiles]).map(p=>p.id),connectionCounts:m.connectionCounts};
+  publisher.write(path.join(data,'unsupported-build.json'),report);
+  throw Error(`已发现游戏连接${routing}；当前 ${variant} 游戏版本尚未适配，实时解析未启动。无需重新进入角色。可运行“检查当前游戏版本”生成本机适配资料。`);
+ }
  const session=path.join(data,'sessions',new Date().toISOString().replace(/[:.]/g,'-')+'-'+m.pid),boot=path.join(session,'initialization');fs.mkdirSync(boot,{recursive:true});fs.writeFileSync(path.join(boot,'module.json'),JSON.stringify(m));
  status('正在初始化当前登录会话','正在采集连接并校验解码状态；此时请勿开始战斗。');
  const list=await run(tshark,['-D']);const available=list.split(/\r?\n/).map(l=>l.match(/^\d+\. (\\Device\\NPF_\S+)/)?.[1]).filter(Boolean);
- const interfaces=m.interfaces.filter(i=>available.some(a=>a.toLowerCase()===i.toLowerCase()));if(!interfaces.length)throw Error('没有可用抓包网卡，请检查 Npcap');
+ const interfaces=m.interfaces.filter(i=>available.some(a=>a.toLowerCase()===i.toLowerCase()));
+ if(m.flows.some(f=>f.loopback)&&!interfaces.some(i=>i.toLowerCase()==='\\device\\npf_loopback'))throw Error('已识别游戏的本地转发连接，但 Npcap 没有提供回环采集接口');
+ if(!interfaces.length)throw Error('没有可用抓包网卡，请检查 Npcap');
  const filter='tcp and ('+m.flows.map(f=>`(src host ${f.serverAddress} and src port ${f.serverPort} and dst host ${f.clientAddress} and dst port ${f.clientPort})`).join(' or ')+')';
  const fields=['frame.number','frame.time_epoch','frame.interface_id','ip.src','tcp.srcport','ip.dst','tcp.dstport','tcp.seq_raw','tcp.len','tcp.flags.syn','tcp.flags.fin','tcp.flags.reset','tcp.payload'];
  const log=path.join(boot,'capture.private.tsv'),stream=fs.createWriteStream(log);

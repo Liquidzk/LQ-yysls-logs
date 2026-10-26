@@ -5,7 +5,7 @@ const wait = ms => new Promise(r => setTimeout(r, ms))
 test('supervisor exits on parent EOF during retry without selecting another process', { skip: process.platform !== 'win32', timeout: 20000 }, async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'yanyun-lifecycle-'))
   const scripts = path.join(root, 'tools'), data = path.join(root, 'data'); fs.mkdirSync(scripts); fs.mkdirSync(data)
-  for (const file of ['p2-session-service.cjs', 'p1-snapshot-publisher.cjs']) fs.copyFileSync(path.join(__dirname, '../collector/tools', file), path.join(scripts, file))
+  for (const file of ['p2-session-service.cjs', 'p1-snapshot-publisher.cjs', 'client-profile.cjs']) fs.copyFileSync(path.join(__dirname, '../collector/tools', file), path.join(scripts, file))
   // A fake discovery result only. Never opens or enumerates real game processes.
   fs.writeFileSync(path.join(scripts, 'p2-discover.ps1'), `param([int]$GameProcessId,[string]$ExpectedStart)\n@{status='running';pid=$GameProcessId;processStartUtc=$ExpectedStart;flows=@()} | ConvertTo-Json -Compress\n`)
   const binding = { pid: 2147483647, startedAt: '2026-01-01T00:00:00Z' }, bindingFile = path.join(data, 'binding.private.json')
