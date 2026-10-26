@@ -15,7 +15,16 @@ let overlaySource = 'live', overlayLocked = false
 const preferenceKeys = ['yanyun-last-review', 'yanyun-review-view', 'yanyun-overlay-v2']
 const readJson = (file, fallback) => { try { return JSON.parse(fs.readFileSync(file, 'utf8').replace(/^\uFEFF/, '')) } catch { return fallback } }
 const writeJson = (file, value) => { fs.mkdirSync(path.dirname(file), { recursive: true }); fs.writeFileSync(file + '.tmp', JSON.stringify(value)); fs.renameSync(file + '.tmp', file) }
-if (!app.requestSingleInstanceLock()) { app.quit() } else {
+const runningClientFile = path.join(app.getPath('userData'), 'running-client.json')
+if (!app.requestSingleInstanceLock()) {
+  const running = readJson(runningClientFile, {})
+  if (running.version !== app.getVersion() || running.executable?.toLowerCase() !== process.execPath.toLowerCase()) {
+    dialog.showErrorBox('已有燕云 Logs 窗口正在运行',
+      '这次启动的 ' + app.getVersion() + ' 尚未运行。\n请先在已有窗口的“燕云 Logs → 退出”菜单完全退出，再重新启动此程序。\n\n这次启动的位置：' + process.execPath)
+  }
+  app.quit()
+} else {
+  writeJson(runningClientFile, { version: app.getVersion(), executable: process.execPath, pid: process.pid })
   app.on('second-instance', () => { if (main) { main.restore(); main.show(); main.focus() } })
   app.whenReady().then(start).catch(error => {
     dialog.showErrorBox('燕云 Logs 启动失败', error.message)

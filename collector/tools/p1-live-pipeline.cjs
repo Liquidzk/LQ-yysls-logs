@@ -30,6 +30,9 @@ if (c.identityCacheFile && fs.existsSync(c.identityCacheFile) && fs.statSync(c.i
 }
 const write = (file, data) => publisher.write(path.join(out, file), data)
 const append = (file, data) => ledger.append(path.join(out, file), JSON.stringify(data) + '\n')
+// New sessions may receive no fresh name packet. Make verified cached names
+// available to replay immediately, including hits and buffs without counters.
+if (identities.size) write('identities.json', { source, names: [...identities.values()] })
 const counters = { packets: 0, blocks: 0, statistics: 0, damageEvents: 0, buffEvents: 0, rejectedEvents: 0, settlements: 0 }
 let latest = { schemaVersion: 1, source, observedAt: null, actors: [], sequence: 0, npcNo: null, timeCostSeconds: 0,
   health: { status: 'starting', stale: true, gap: false, session: mode === 'live' ? 'pending' : 'recorded' } }

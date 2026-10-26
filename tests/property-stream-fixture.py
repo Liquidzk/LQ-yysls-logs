@@ -23,6 +23,25 @@ create=message('AreaCreateEntityMsg',{'name':b64encode(b'Avatar').decode(),'id':
  {'name':idx(1094),'dict':{'item':[prop(6090,raw('真实编号测试角色'))]}},buff]}})
 stream=BuffStream();names=IdentityStream().consume(create);events=stream.consume(create)
 assert names[0]['name']=='真实编号测试角色'
+# Binding after login must not require a prior GUID snapshot when eid is explicit.
+identities=IdentityStream()
+own={'eid':b64encode(b'own-player').decode(),'path':[idx(1094)],**prop(6090,raw('本机角色'))}
+late=identities.consume(message('AoiProp',{'guid':'99','props':[own]}))
+assert late[0]['idHash']==hashlib.sha256(b'own-player').hexdigest()[:16]
+assert late[0]['identityEvidence']['actorIdBasis']=='property.eid'
+# An eid applies only to its subtree, never an unrelated sibling or unknown GUID.
+assert identities.consume(message('AoiProp',{'guid':'99','props':[{'path':[idx(1094)],**prop(6090,raw('不能猜测'))}]}))==[]
+named=lambda n:idx(identities.preset.indexes[n])
+team=message('AoiProp',{'guid':'99','props':[{'path':[named('team'),named('players_base'),raw('member-id')],**prop(6090,raw('队伍成员'))}]})
+member=identities.consume(team)[0]
+assert member['idHash']==hashlib.sha256(b'member-id').hexdigest()[:16]
+assert member['nameSource']=='wire.team.players_base.nickname'
+social=message('AoiProp',{'guid':'99','props':[{'path':[raw('social'),named('players_base'),raw('member-id')],**prop(6090,raw('不能错配'))}]})
+assert identities.consume(social)==[]
+assert identities.consume(team)==[]
+npc=message('AreaCreateEntityMsg',{'name':b64encode(b'Npc').decode(),'id':b64encode(b'npc').decode(),'guid':'100','props':{'props':[{'name':idx(1094),'dict':{'item':[prop(6090,raw('非玩家'))]}}]}})
+assert identities.consume(npc)==[]
+assert identities.consume(message('AoiProp',{'guid':'100','props':[{'path':[idx(1094)],**prop(6090,raw('非玩家更新'))}]}))==[]
 assert events[0]['buffNo']==12345 and events[0]['sourceActorHash']==hashlib.sha256(b'provider').hexdigest()[:16]
 patch=message('AoiProp',{'guid':'1','props':[{'path':[idx(1496),idx(502),raw('instance')],**prop(1733,{'ivalue':3})}]})
 changed=stream.consume(patch)[0];assert changed['buffNo']==12345 and changed['charge_level']==3 and changed['hadKnownState']
@@ -36,4 +55,4 @@ e=unknown.consume(message('AoiProp',{'guid':'2','props':[{'path':[idx(1496),idx(
 assert e['buffNo']==102 and e['targetActorHash'] is None and e['targetGuid']=='2'
 try:PropertyPreset('0'*64);raise AssertionError('Unknown build accepted')
 except ValueError:pass
-print(json.dumps({'passed':True,'preset':stream.preset.id,'checks':['name','buff-fields','patch-state','remove','unresolved-guid-isolation','unknown-build-rejected']}))
+print(json.dumps({'passed':True,'preset':stream.preset.id,'checks':['name','explicit-eid','team-names','identity-isolation','buff-fields','patch-state','remove','unresolved-guid-isolation','unknown-build-rejected']}))

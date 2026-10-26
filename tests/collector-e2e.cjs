@@ -8,6 +8,7 @@ fs.mkdirSync(local, { recursive: true })
 const python = path.join(root, 'runtime/collector/runtime/python/python.exe')
 const b64 = b => Buffer.from(b).toString('base64')
 const currentBuild = process.argv.includes('--current-build')
+const cachedOnly = process.argv.includes('--cached-only')
 const build = require('../collector/config/client-build.json').builds.find(p => p.id === 'cn-win64r-20261023')
 const currentNames = require('../collector/config/presets/cn-win64r-20261023.json').names
 const bytes = s => ({ svalue: b64(s) }), index = n => ({ sindex: currentBuild ? currentNames.indexOf(mapping.rows.find(r => r.index === n)?.name) : n }), integer = n => ({ ivalue: n })
@@ -35,6 +36,9 @@ const messages = [
   area(0x2e77db68, [{ stat_type: 2, time_cost: 5, combat_stat: { 'actor-a': { combat_stat: { damage: 100, heal: 0, absorb_dmg: 20 },
     combat_stat_detail: { target: { damage: { '456': 100 }, heal: {}, absorb_dmg: {} } } } } }])
 ]
+if (cachedOnly) for (const packet of messages) {
+  if (packet.message.name === b64('Avatar')) packet.message.props.props = packet.message.props.props.filter(p => p.name.sindex !== index(1070).sindex)
+}
 const encoded = spawnSync(python, [path.join(__dirname, 'encode-proto-fixture.py')], { cwd: root, input: JSON.stringify(messages), encoding: 'utf8', windowsHide: true })
 assert.equal(encoded.status, 0, encoded.stderr)
 const bodies = JSON.parse(encoded.stdout).map(x => Buffer.from(x, 'base64'))
@@ -48,8 +52,13 @@ const lines = bodies.map((body, i) => {
 })
 const packets = path.join(local, 'synthetic.tsv'); fs.writeFileSync(packets, lines.join('\n') + '\n')
 const config = path.join(local, 'config.json')
+const identityCacheFile = path.join(local, 'identity-cache.json')
+if (cachedOnly) fs.writeFileSync(identityCacheFile, JSON.stringify({ names: [
+  ['actor-a', '离线验证角色'], ['actor-b', '队友示例']
+].map(([id, name]) => ({ idHash: crypto.createHash('sha256').update(id).digest('hex').slice(0, 16), name, nameSource: 'wire.avatar.base.nickname' })) }))
 fs.writeFileSync(config, JSON.stringify({ pid: 1, processStartUtc: '2026-01-01T00:00:00Z', serverEncryptedOrigin: 10000,
   ...(currentBuild ? { clientBuildSha256: build.imageSha256 } : {}),
+  ...(cachedOnly ? { identityCacheFile } : {}),
   initialStateFile: stateFile, initialStateSha256: crypto.createHash('sha256').update(fs.readFileSync(stateFile)).digest('hex'), python,
   flow: { serverAddress: '192.0.2.1', serverPort: 2345, clientAddress: '192.0.2.2', clientPort: 4567 } }))
 const output = path.join(local, 'capture')
@@ -60,6 +69,11 @@ const stats = rows('statistics.jsonl'), hits = rows('damage-events.jsonl'), buff
 assert.equal(stats.length, 3); assert.equal(stats.at(-1).actors[0].damage, 100); assert.equal(stats.at(-1).actors[0].name, '离线验证角色')
 assert.equal(hits.length, 1); assert.equal(hits[0].amount, 100); assert.equal(hits[0].rawSkillId, 456)
 assert.equal(hits[0].sourceActorName, '离线验证角色')
+if (cachedOnly) {
+  assert.equal(fs.existsSync(path.join(output, 'identity-events.jsonl')), false)
+  const names = JSON.parse(fs.readFileSync(path.join(output, 'identities.json'))).names
+  assert.equal(names.length, 2); assert.equal(names.every(n => n.cached === true), true)
+}
 assert.equal(buffs.length, 1); assert.equal(buffs[0].buffNo, 123); assert.equal(buffs[0].charge_level, 2)
 assert.equal(buffs[0].sourceActorName, '队友示例'); assert.equal(buffs[0].targetActorName, '离线验证角色')
 assert.equal(buffs[0].propertyPreset, currentBuild ? build.id : 'cn-win64rh-20261013')

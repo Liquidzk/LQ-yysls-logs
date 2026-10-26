@@ -1,4 +1,4 @@
-LQ 燕云 Logs 0.4
+LQ 燕云 Logs 0.4.1
 ================
 
 Windows 独立客户端：手动选择燕云进程后采集，实时悬浮统计，保存捕获记录用于复盘；也可单独导入游戏本地 CLv2 日志。
@@ -37,7 +37,7 @@ Kagerou 上游源码仍在子模块中便于追溯，发行包仅允许 yanyun/ 
 5. 本机生成的名称映射放入 engine/name_catalog.json。该文件不提交仓库；缺失时以编号显示。
 6. powershell -NoProfile -ExecutionPolicy Bypass -File tools/build-engine.ps1 -Python <Python 路径>
 7. npm run package
-8. 输出 release/v0.4/LQ-yysls-logs-win32-x64/燕云Logs.exe；完整目录一起使用。
+8. 输出 release/v0.4.1/LQ-yysls-logs-win32-x64/燕云Logs.exe；完整目录一起使用。
 
 开发运行：先构建解析引擎、准备采集资源，再 npm start。
 可在根目录创建 desktop.local.json 指定 dataDir 和 logRoot；该配置只保存在本机。
@@ -47,7 +47,9 @@ Kagerou 上游源码仍在子模块中便于追溯，发行包仅允许 yanyun/ 
 npm test
 在 engine 目录运行 python -m unittest discover -s tests -v
 node tests/collector-e2e.cjs
-最后一项使用合成消息和实际协议解码器，完全离线，不选择游戏进程、不打开抓包网卡。
+node tests/collector-e2e.cjs --current-build
+node tests/collector-e2e.cjs --current-build --cached-only
+以上端到端验证使用合成消息和实际协议解码器，覆盖旧版、当前版本及仅有缓存名字的会话；完全离线，不选择游戏进程、不打开抓包网卡。
 可用 --validation-data <独立目录> 启动客户端进行隔离验收，不影响原有战斗库。
 
 采集兼容配置目前锁定经过校验的客户端映像；游戏更新导致校验失败时需要重新分析并更新配置，不绕过校验。
