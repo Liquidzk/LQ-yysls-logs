@@ -1,0 +1,16 @@
+LQ 燕云 Logs capture engine
+
+The protocol helpers under tools/ are adapted from the user-supplied
+YyslsLogs 0.2.1 local distribution (resources/app/package.json declares
+GPL-3.0-or-later). Original authorship and existing comments are retained.
+The session supervisor, event publication, archive integration and desktop
+integration were adapted for LQ-yysls-logs. Distributed under GPL-3.0-or-later.
+
+Third-party runtime licenses remain next to their components:
+Node.js, Python, Wireshark, protobuf and @msgpack/msgpack.
+Node.js v24.19.0 license source: https://raw.githubusercontent.com/nodejs/node/v24.19.0/LICENSE
+Npcap is an external installed prerequisite, not redistributed by this project.
+Protocol descriptors and property maps are locally imported compatibility
+assets. Raw sample sessions and connection secrets are not redistributed.
+Current field mappings are version-specific and do not establish complete
+team state, exact server execution timing, or validated rDPS.

@@ -1,0 +1,3 @@
+[submodule "vendor/kagerou"]
+	path = vendor/kagerou
+	url = https://github.com/Liquidzk/kagerou.git

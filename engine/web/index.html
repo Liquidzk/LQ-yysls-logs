@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="zh-CN">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>燕云 Logs · 战斗复盘</title><link rel="stylesheet" href="/style.css"></head>
+<body>
+  <aside class="library">
+    <a href="/" style="display:block;margin:0 0 18px;color:#b9d594;text-decoration:none;font-size:12px">← 实时采集与捕获记录</a>
+    <div class="brand"><span class="brand-mark">燕</span><div><strong>燕云 <span>Logs</span></strong><small>让每一场战斗有迹可循</small></div></div>
+    <div class="library-actions"><button class="primary" id="import-button">＋ 导入日志</button><button id="rescan" title="重新检查游戏日志目录">↻ 扫描</button></div>
+    <input id="import-files" type="file" multiple accept=".bin,.zip" hidden>
+    <label class="search"><span>⌕</span><input id="session-search" type="search" placeholder="搜索日期、场景名称或编号" aria-label="搜索战斗记录"></label>
+    <div class="library-caption"><span>战斗记录 <b id="session-count">0</b></span><span>本机归档</span></div>
+    <div id="session-list" class="session-list" aria-label="战斗记录列表"></div>
+    <button id="merge-selected" class="merge-button" disabled>合并勾选视角 <span id="selected-count">0</span></button>
+    <div class="watcher"><span class="status-dot"></span><div id="watch-status">正在读取本机记录…</div></div>
+  </aside>
+  <main>
+    <header class="topbar"><div><span class="eyebrow">COMBAT REVIEW</span><span class="version">桌面版 v0.4 · 本地 CLv2</span></div><div class="top-actions"><button id="kagerou-button">复盘统计窗</button><button id="names-button">名称映射</button><button id="help-button" aria-label="使用说明">使用说明</button><button id="export-button" disabled>导出日志包</button></div></header>
+    <div id="empty-state" class="empty-state"><span class="empty-mark">录</span><h1>从一场战斗开始</h1><p>导入自己或队友的 .bin 日志与日志包，<br>或点击“扫描”，读取游戏日志目录中已经保存的战斗。</p><button id="empty-import" class="primary">导入战斗日志</button></div>
+    <section id="report" hidden>
+      <div class="report-heading"><div><div class="eyebrow" id="report-date"></div><h1 id="report-title">战斗复盘</h1><div class="report-subtitle" id="report-subtitle"></div></div><div class="report-stamp"><span>已存档</span><small id="report-config"></small></div></div>
+      <div class="metrics" id="metrics"></div>
+      <div class="coverage-line"><span class="coverage-icon">◉</span><span id="coverage-text"></span><button class="text-button" id="coverage-detail">查看记录范围</button></div>
+      <div class="toolbar"><div class="tabs" role="tablist" aria-label="复盘内容"><button role="tab" data-tab="overview" aria-selected="true" class="active">战斗时间线</button><button role="tab" data-tab="skills" aria-selected="false">技能复盘</button><button role="tab" data-tab="buffs" aria-selected="false">Buff 覆盖</button><button role="tab" data-tab="damage" aria-selected="false">伤害与治疗</button><button role="tab" data-tab="events" aria-selected="false">事件记录</button></div><label class="actor-filter-label">观察对象<select id="actor-select" aria-label="观察对象"></select></label></div>
+      <div class="review-grid">
+        <div class="review-content">
+          <div class="time-window"><div><span class="small-label">分析区间</span><label><input id="range-from" type="number" min="0" step="0.1" value="0" aria-label="区间开始秒"> <span>—</span> <input id="range-to" type="number" min="0" step="0.1" aria-label="区间结束秒"> 秒</label><button id="range-apply">应用</button><button id="range-reset" class="text-button">整场</button></div><span class="quiet" id="time-reference">零点：首条观测事件</span></div>
+          <div id="overview-panel" class="tab-panel">
+            <div class="panel-top"><h2>动作与事件</h2><label><input type="checkbox" id="show-npc" checked> 显示 NPC / 未识别实体</label></div>
+            <div class="chart-legend"><span><i class="cast-key"></i>确认施放</span><span><i class="sync-key"></i>同步动作</span><span><i class="buff-key"></i>Buff 添加</span><span><i class="hit-key"></i>受到伤害</span></div>
+            <div id="timeline-wrap"><svg id="timeline" role="img" aria-label="多人战斗事件时间线"></svg></div>
+            <div id="timeline-description" class="quiet small"></div>
+            <div class="section-divider"></div>
+            <div class="panel-top"><h2>技能释放顺序</h2><span class="quiet">点击查看施放时的 Buff、阶段与事件</span></div>
+            <div id="rotation" class="rotation"></div>
+          </div>
+          <div id="skills-panel" class="tab-panel" hidden>
+            <div class="panel-top"><h2>技能施放记录</h2><span class="quiet">按观察对象与分析区间筛选</span></div>
+            <div class="event-controls"><input id="cast-search" type="search" placeholder="搜索技能名称、编号或施放者" aria-label="搜索技能施放"><select id="cast-kind" aria-label="动作记录类型"><option value="cast">确认开始施放</option><option value="interrupted">有同技能中断记录</option><option value="sync">仅同步通知</option><option value="all">全部动作记录</option></select></div>
+            <div id="cast-summary" class="cast-summary"></div>
+            <p class="subtle-help">点击一行查看当时的 Buff 来源、层数和技能阶段。中断记录也可能来自正常衔接，不等于技能失败。同步通知单独列出。</p>
+            <div class="table-wrap"><table><thead><tr><th>开始 / 施放者</th><th>技能</th><th>状态区间</th><th>起点已见 Buff</th></tr></thead><tbody id="cast-table"></tbody></table></div>
+            <div class="pagination"><span id="cast-page-label"></span><button id="cast-prev">上一页</button><button id="cast-next">下一页</button></div>
+          </div>
+          <div id="buffs-panel" class="tab-panel" hidden>
+            <div class="panel-top"><h2>Buff 来源与覆盖区间</h2><label><input type="checkbox" id="external-only"> 只看别人施加的 Buff</label></div>
+            <div class="event-controls"><input id="buff-search" type="search" placeholder="搜索 Buff 名称、编号、来源或目标" aria-label="搜索 Buff 覆盖"></div>
+            <p class="subtle-help">按已见增删事件重建。虚线表示起止边界不全；不同来源分别列出，不把未知状态算作未覆盖。</p>
+            <div class="table-wrap"><table><thead><tr><th>Buff</th><th>来源 → 目标</th><th>观测区间</th><th>重建覆盖</th></tr></thead><tbody id="buff-table"></tbody></table></div>
+            <div class="pagination"><span id="buff-page-label"></span><button id="buff-prev">上一页</button><button id="buff-next">下一页</button></div>
+          </div>
+          <div id="damage-panel" class="tab-panel" hidden>
+            <div class="panel-top"><h2>伤害与治疗明细</h2><select id="damage-mode" aria-label="伤害统计类型"><option value="outgoing">对外造成伤害</option><option value="incoming">受到伤害</option><option value="self">自身伤害</option><option value="heal-given">造成治疗</option><option value="heal-taken">受到治疗</option></select></div>
+            <div id="damage-notice" class="subtle-help"></div><div class="table-wrap"><table><thead><tr><th>技能</th><th>来源 → 目标</th><th>观测数值</th><th>记录次数</th><th>区间每秒</th></tr></thead><tbody id="damage-table"></tbody></table></div>
+          </div>
+          <div id="events-panel" class="tab-panel" hidden>
+            <div class="event-controls"><input id="event-search" type="search" placeholder="搜索技能、Buff 编号或名称" aria-label="搜索事件"><select id="event-type" aria-label="事件类型"><option value="all">全部战斗事件</option><option value="skill">技能</option><option value="buff">Buff</option><option value="damage">伤害</option><option value="heal">治疗</option><option value="resource">资源变化</option><option value="animation">动作动画</option><option value="entity">实体创建 / 离开</option><option value="diagnostic">底层诊断事件</option></select></div>
+            <div class="table-wrap"><table><thead><tr><th>时间</th><th>事件</th><th>来源 → 目标</th><th>技能 / Buff / 数值</th></tr></thead><tbody id="event-table"></tbody></table></div>
+            <div class="pagination"><span id="event-page-label"></span><button id="event-prev">上一页</button><button id="event-next">下一页</button></div>
+          </div>
+          <div class="playback"><button id="play-button" aria-label="播放复盘">▶</button><span id="cursor-label" class="clock">00:00.000</span><input id="cursor" type="range" min="0" value="0" step="0.001" aria-label="复盘时间"><span id="duration-label" class="quiet"></span><select id="play-speed" aria-label="播放速度"><option value="0.5">0.5×</option><option value="1" selected>1×</option><option value="2">2×</option><option value="4">4×</option></select></div>
+          <div class="notes-section"><div class="panel-top"><h2>复盘笔记</h2><span class="quiet">记录在当前时间点</span></div><form id="note-form"><input id="note-text" maxlength="1000" placeholder="例如：这一轮爆发前 Buff 断了，检查队友释放时间…" aria-label="笔记内容"><button class="primary" type="submit">＋ 添加标记</button></form><div id="note-list"></div></div>
+        </div>
+        <aside class="snapshot"><div class="panel-top"><h2>此刻的已知状态</h2><span id="snapshot-time" class="quiet"></span></div><div id="snapshot-body"></div><div class="section-divider"></div><h2>多人同期快照</h2><div id="team-snapshot"></div><div class="section-divider"></div><h2>最近事件</h2><div id="recent-events"></div></aside>
+      </div>
+    </section>
+  </main>
+  <dialog id="dialog"><div class="dialog-header"><h2 id="dialog-title"></h2><button id="dialog-close" aria-label="关闭">×</button></div><div id="dialog-body"></div></dialog>
+  <div id="toast" role="status" aria-live="polite" hidden></div>
+  <script src="/review.js"></script><script src="/app.js"></script>
+<script src="/desktop-bridge.js"></script></body>
+</html>

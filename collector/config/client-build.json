@@ -1,0 +1,5 @@
+{
+  "id": "cn-20261013",
+  "imageSha256": "2cff32efe14b24ecbde8916bcccd63559379d3ba50dec4e9ca56faf89fc93f42",
+  "evidence": "Saved REA exact Lua G.net._asio_gate_client / inbound RC4 chain; bounded reads and schema alignment required"
+}

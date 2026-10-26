@@ -1,0 +1,86 @@
+采集服务与游戏本体日志对照
+核对日期：2026-10-25（Asia/Singapore）
+
+结论
+示例 YyslsLogs 0.2.1 的默认实时链路不是读取 ClientLocalLog。它在初始化阶段读取当前游戏连接的解码状态，随后通过 TShark/Npcap 被动捕获游戏服务器发往本机的 TCP 数据，重组、解码并产生自己的 JSONL 记录。游戏本体 CLv2 则是客户端按场景、实体、事件配置写出的诊断事件日志。两者有交集，但格式、覆盖范围、时钟和更新时机都不同。
+最有价值的增量是服务器队伍累计统计、按角色/目标/技能拆分的结算，以及部分逐次通知。不能据此承诺完整队友技能时间线或全部 Buff 覆盖。
+
+检查范围与依据
+S = 用户提供的 YyslsLogs-0.2.1/resources。
+G = 本机既有 yysls_static_code_snapshot/source。
+L = 本项目 engine。
+本次只读源码、既有验证结果、本机游戏程序文件摘要；未启动示例采集服务、未读取游戏进程内存、未抓取新网络数据，也未修改游戏。
+G 是 2026-10-19 整理的反编译阅读副本，不是当前进程实际加载版本的证明。历史日志统计采用 2026-10-21 已保存的 883 份样本审计，不冒充本次新实战。
+
+一、示例默认启动链路
+1. S/app/main.cjs:86 启动 tools/p2-session-service.cjs。没有 --live-file/验证模式时才自动启动这条链路。界面每 250 ms 读取服务状态和最新快照；这不是服务器发送周期，也不是事件时间精度。
+2. S/tools/p2-discover.ps1:3 发现 yysls 进程，读取程序路径、启动时间、已建立 TCP 连接和可用网卡。
+3. S/tools/p2-session-service.cjs:16 的 bootstrap 校验程序 SHA-256，开始短时初始化捕获，并调用 p2-read-state.py。
+4. S/tools/p2-read-state.py:6 使用 OpenProcess/ReadProcessMemory，只读访问已知字段链，取得接收方向的连接解码状态；这里读取的是连接状态，不是逐帧扫描整个战斗内存。
+5. 初始化把状态与已捕获字节流对齐，要求唯一候选通过协议校验，再启动 p1-live-pipeline.cjs。对齐失败、进程/连接改变均不能继续沿用旧状态。
+6. p1-live-pipeline.cjs 持续调用 TShark，保留原始传输记录；p1-live-core.cjs 做 TCP 排序、重传检查、缺口检查、流解码；normalize-rpc-blocks.cjs 做分帧和 Zstandard 解压；p1-live-proto.py 使用随包的 Protobuf 描述解开消息，并处理嵌套 MessagePack 数据。
+7. 解出的队伍统计、逐次通知、Buff/属性/实体/战斗边界分别落盘，再发布 latest.json 给 Electron/Kagerou。
+
+注意：p1-live-pipeline.cjs 中“没有进程内存访问”的注释描述的是持续采集阶段。整个产品包含前置 p2-read-state.py，不能把整套服务描述成完全不读内存。
+包中确有 decode-clv2.cjs、watch-clv2.cjs，它们属于另外的日志调查/离线工具；已检查的默认桌面实时入口没有调用它们。
+
+二、它实际提取了什么
+队伍累计统计：
+  p1-live-core.cjs:42 的 statisticFromBytes 解析 statistic[角色] 的 damage、heal、absorb_dmg，以及 npc_no、stat_type、time_cost。
+  app/combat-model.cjs 基于这些累计值计算排行；不是先取得全部单次伤害再求和。
+  G/hexm/client/entities/server/player_avatar_members/imp_dungeon.lua:518 的 rpc_dungeon_show_statistic 同样接收 stat_type/statistic/combat_stat/time_cost，并向游戏自身统计界面分发。
+  G/hexm/common/consts/dungeon_consts.lua:67 区分 DETAIL=0、TICK=1、JIESUAN=2。结合字段与解码入口，示例统计与游戏原生副本统计消息结构一致；这是代码对照，不是同一场实战的数值对账。
+  通知只覆盖发给本机且成功解码的角色/场景；没有数据时不能保证任意地图都能出全队排行。
+
+逐次伤害/受击通知：
+  p1-rdps-damage-batch.cjs 处理单条和批量同步封装；p1-live-core.cjs:44 提取来源、目标、amount、hurt、技能代号、结算点、标志等。
+  记录的 serverTimestamp 为 null，timestampBasis 为包捕获完成时间。它是接收时间，不是服务器执行这次技能/伤害的准确时间。
+  同类通知可能混有治疗、承伤、自伤等；damage-events.jsonl 的文件名不能作为“全部都是对敌有效输出”的证明。敌我、目标范围、治疗语义需要单独分类。
+  网络通知带技能编号也不等于已恢复按键、起手、前后摇、打断和未命中的释放。
+
+详细结算：
+  p1-settlement-details.cjs:44 处理 stat_type=2 的 combat_stat/combat_stat_detail，拆出角色、目标、技能的数值；own_skill_detail/own_skill_counter 可带 count/min/max 等汇总。
+  函数明确标记 perHit:false。结算没有每次命中的时间点、每次施法时的 Buff 快照；count 也不应直接当作施法次数。
+  这是接入技能伤害构成和核对总量的重要接口，但不能反推完整出招顺序。
+
+Buff：
+  p1_buff_stream.py:55 只消费识别出的 buffs_data.ac_buffs 与 oc_buffs 属性投影。
+  可保存 Buff 编号、来源、目标、实例、层数、名义开始/持续时间和属性变化。
+  ac_buffs 标为公开可见投影，oc_buffs 标为本人客户端投影；本机收到公开 Buff 不代表拥有队友全部私有状态。
+  p1_buff_stream.py:96 的覆盖报告明确保持 complete、timingValidated、sourceOwnershipValidated、snapshotValidated、privateBuffCoverageComplete、aoiClosureValidated、lifecycleOpcodesValidated 为 false。
+  新增/移除操作标签部分仍是候选语义；离开可见范围不能当作 Buff 消失，名义到期不能直接当成某次命中的 Buff 执行状态。
+
+动作时间线：
+  默认 p1-live-proto.py 输出 statistics、events（已选择的受击同步）、identities、encounterEvents、buffEvents、attributeEvents。
+  已检查的默认消费者没有相当于现有 CLv2 skill_req/skill_state_change 的完整全队施法记录输出。保留原始网络记录允许后续补解，但“保存了原始流”和“当前已经支持该功能”应区分。
+
+三、游戏本体 CLv2 的特点
+G/hexm/client/entities/local/common_members/client_local_log_base.lua:63 订阅实体自己的技能状态、Buff、受击、资源事件，经过 should_log_entity 等开关后写入。它不是全局所有角色、所有伤害的监听器。
+G/hexm/client/consts/client_log_config.lua:512 的 PVE_MULTI 静态配置列出 MAIN_PLAYER 和 NPC，没有 OTHER_PLAYER。允许 NPC 也不证明所有 NPC 都实际安装了同样的记录组件；其他场景配置可能不同。
+G/hexm/client/util/client_local_log.lua:243 先把事件放入 local_log_entries；保存、销毁和分段保存路径再写盘。存在每段 2000 条的分段逻辑，但不能据此认定每 2000 条自动即时落盘。
+G/hexm/client/entities/local/space_members/imp_client_local_log.lua:611 的 0.1 秒定时器属于已经触发的分段保存过程，不是已证明的普通战斗固定写盘周期。
+CLv2 带文件头、长度帧、压缩后的 MessagePack 事件、客户端记录时间与帧号；和示例的 TCP/Protobuf 消息格式不同。
+L/library.py:112 每 10 秒扫描一次文件。把扫描改成 250 ms 只能更快发现已写出的块，不能让游戏把仍在内存里的日志提前写出，更不能增加未记录的队友事件。
+
+历史样本的实际覆盖（883 份，非新实战）
+总计 1,920,071 条事件。
+skill_state_change 共 179,795 条，其中 179,775 条归属本地玩家，20 条属于其他或未分类实体。
+解析出的受击记录 30,898 条：其中 11,826 条是本地玩家受到伤害，18,987 条是本地玩家受到治疗；另有少量其他目标和其他类型。
+这说明已有样本适合自己的动作/承伤/受到的 Buff 复盘，不能把所有 behit_began 相加称为自己的输出 DPS，也不能因出现队友作为 Buff 来源就认定已记录该队友的全部动作。
+来源：既有 linshi/yanyun_logs_probe/combat_log_audit.json 及生成脚本；其事件名称来自本地静态快照，历史运行版本尚未逐份绑定。
+
+四、保存结果与验证状态
+示例会话保存在 %APPDATA%/YyslsLogs/sessions，下有 initialization、capture 和按战斗切分的 battles。
+主要文件：transport.private.tsv（原始传输）、statistics.jsonl（累计值）、damage-events.jsonl、buff-events.jsonl、attribute-events.jsonl、encounter-events.jsonl、settlement-details.jsonl，以及 latest.json。
+p1-battle-archive.cjs:17 的 battle.json 指向共享的会话原始记录；每场目录主要保存快照、身份和估算结果，不是把每一种全会话事件流都独立复制成该场完整时间线。
+随包 evidence/p1/overlay/live-path-verification.json 实际 source.mode=replay、health.status=replay-complete，含 10 个角色和 37,568 条 Buff 观测计数，但 complete=false。文件名里的 live-path 不能证明当前实战可用。
+本次只读计算的本机 Win64rh 主程序及其 BinPatch 副本 SHA-256 均匹配示例 client-build.json 配置（cn-20261013）。这只排除了这两个文件在该项校验上的差异；不证明当前运行进程使用它们，也不验证热更新协议、权限、驱动、当前会话和数值完整性。
+
+五、适合本项目的接入方式
+保留两个输入来源：CLv2 补充自身输入/技能阶段/本地事件；网络采集补充已观测队伍累计值、逐次通知、Buff 属性与结算。每条记录保留来源和时钟含义。
+优先把统计快照用于实时 Kagerou，把逐条记录与原始流用于战后复盘，把结算用于核对技能构成及总量。
+累计统计、单次通知、结算是不同视图，不可简单相加；接收时间与客户端日志时间必须校准，同一次事件应去重，人物身份需核对原始 ID 表示，不能仅按昵称合并。
+未命中/打断/纯辅助技能与队友私有 Buff 仍需专门补齐；不要从“累计伤害增长”伪造一次技能释放。
+第一轮实战应同时保留两条输入，并按同一场战斗核对累计总量、逐次通知总和、结算技能值、Buff 起止和来源。完成这一步，才能说明哪些字段可用于可靠排行、哪些只是部分观测。
+
+本次仅完成调查与对照，没有把采集模块移植或启用到我们的客户端。

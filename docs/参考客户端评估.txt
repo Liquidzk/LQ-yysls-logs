@@ -1,0 +1,57 @@
+参考客户端评估 · 2026-10-25
+
+检查范围
+用户提供的 YyslsLogs 0.2.1 安装包中的 app、tools、config、vendor、许可证与构建清单。
+采用静态源码检查，未运行其进程读取或网络采集模块。
+
+结论
+它以 Kagerou 悬浮窗为界面基础，由 Electron 承载；并非取得 FFLogs 的完整应用源码。
+FFLogs 出现在公开 rDPS 数学规则的参考与合成测试中。
+它更偏实时统计悬浮窗。我们的主要用途是整场复盘，所以把统计窗与完整事件时间线放在同一客户端。
+
+可确认的仓库与组件
+1. ffcafe-overlays/kagerou
+   https://github.com/ffcafe-overlays/kagerou
+   tools/record-p1-status.cjs 记录版本 0.8.15、提交 cc6bda1264c378f89de2847142392b44f584da69。
+   resources/vendor/kagerou/dist 为实际界面；main.cjs 加载 /kagerou/overlay/。
+   GPL-3.0-or-later，许可包含 FFCafe 和原作者声明。
+2. electron/electron
+   https://github.com/electron/electron
+   app/package.json 固定 Electron 44.9.0。负责桌面窗口、托盘、快捷键、进程管理。
+3. msgpack/msgpack-javascript
+   https://github.com/msgpack/msgpack-javascript
+   tools/package.json 使用 @msgpack/msgpack 3.1.3。
+4. Wireshark / TShark
+   https://gitlab.com/wireshark/wireshark
+   resources/runtime/wireshark 带运行时；p2-session-service.cjs 调用 tshark。
+   安装包说明称本机另有 Npcap，包内不含驱动安装器。
+5. Node.js、Python
+   https://github.com/nodejs/node
+   https://github.com/python/cpython
+   resources/runtime 中均有运行时，tools 的 CJS/Python 脚本处理采集与解析。
+6. Jeong-Min-Cho/unluac 与 fangfang1984/netease-messiah-tools
+   前者在 record-codec-stage.cjs 作为反编译分析工具记录；后者在 record-exit-codec-analysis.cjs 作为算法假设来源引用。
+   不能据此认定两者是最终桌面程序的运行依赖。
+
+FFLogs 关系
+tools/p1-attribution.cjs 引用 https://www.fflogs.com/help/rdps。
+verify-p1-fflogs-conformance.cjs 明确限定为公开数学规则对照，并非专有实现审查或完整算法保证。
+使用说明称 rDPS 是简化估算；这些标签应保留，不能改称准确完整的团队贡献排名。
+
+组织方式与取舍
+app：Electron 宿主、数据读取、战斗模型、Kagerou 格式转换。
+tools：会话发现、版本校验、记录流处理、战斗划分、贡献计算、离线验证。
+config：客户端版本与计算规则。
+vendor：Kagerou 界面。
+runtime：Node、Python、Wireshark。
+本地会话目录：按会话/战斗分层，保留原始记录、逐条统计和 latest 快照。
+
+采用的思路
+显示与解析分层；保留原始记录；缺失数据不记零；历史数据明确标为回放；完整记录流优先于单份最新快照。
+客户端主仓库与 Kagerou fork 分开，通过 Git submodule 固定提交，便于独立升级和追踪差异。
+
+没有直接移植的部分
+其会话初始化绑定具体客户端镜像及解码状态，包内说明新实战验证仍有限；不能未经验证就接为可靠全队数据源。
+进程读取、网络采集和 rDPS 规则后续需逐项核对。本轮客户端仅迁移既有 CLv2 复盘链路。
+用户提供的 Liquidzk/kagerou fork 源于 hibiyasleep/kagerou，基线 26821179425bb0b85ec08b72bdd470ccc71b5a9e。
+本轮在该 fork 上实现燕云适配，没有把 FFCafe 分支或样例程序的私有采集脚本整体覆盖进去。
