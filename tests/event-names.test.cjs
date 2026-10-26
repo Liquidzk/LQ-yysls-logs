@@ -1,0 +1,10 @@
+const test=require('node:test'),assert=require('node:assert/strict')
+const {labelEvent,validIdentity}=require('../collector/tools/event-names.cjs')
+test('event names come only from the corresponding actor IDs',()=>{
+ const ids=new Map([['aaaa', {name:'甲'}],['bbbb',{name:'乙'}]])
+ const e=labelEvent({sourceActorHash:'bbbb',targetActorHash:'aaaa',amount:0},ids)
+ assert.equal(e.sourceActorName,'乙');assert.equal(e.targetActorName,'甲');assert.equal(e.amount,0)
+ assert.equal(labelEvent({sourceActorHash:'cccc'},ids).sourceActorName,null)
+ assert.equal(validIdentity({idHash:'a'.repeat(16),name:'甲',nameSource:'wire.avatar.base.nickname'}),true)
+ assert.equal(!!validIdentity({idHash:'a'.repeat(16),name:'甲',nameSource:'damage-ranking-guess'}),false)
+})

@@ -24,7 +24,7 @@ for (const item of ['tools', 'config']) fs.cpSync(path.join(root, 'collector', i
 ;(async () => {
   const outputs = await packager({ dir: staging, name: 'LQ-yysls-logs', executableName: '燕云Logs',
     platform: 'win32', arch: 'x64', electronVersion,
-    out: path.join(root, 'release/v0.4'), overwrite: true, asar: true,
+    out: path.join(root, 'release', 'v' + pkg.version), overwrite: true, asar: true,
     extraResource: [path.join(root, 'runtime/engine'), collector, skin, assets],
     win32metadata: { ProductName: '燕云 Logs', FileDescription: '燕云实时采集与战斗复盘', CompanyName: 'LQ-yysls-logs' } })
   for (const output of outputs) {

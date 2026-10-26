@@ -12,6 +12,7 @@ const { connectionBoundary } = require('./p1-capture-flags.cjs')
 const { LedgerWriter } = require('./p1-ledger-writer.cjs')
 const { SnapshotPublisher } = require('./p1-snapshot-publisher.cjs')
 const { BattleArchive } = require('./battle-archive.cjs')
+const { validIdentity, labelEvent } = require('./event-names.cjs')
 const args = process.argv.slice(2), opts = {}
 for (let i = 0; i < args.length; i += 2) opts[args[i].replace(/^--/, '')] = args[i + 1]
 if (!opts.config || !opts.out) throw Error('config and new output directory required')
@@ -24,6 +25,9 @@ const state = require('./p1-cipher-anchor.cjs').loadCipherAnchor(c)
 const sessionId = hash(Buffer.from(JSON.stringify([c.pid, c.processStartUtc, c.flow, c.serverEncryptedOrigin, c.initialStateSha256]))).slice(0, 24)
 const source = { mode, sessionId }, ledger = new LedgerWriter(), publisher = new SnapshotPublisher()
 const archive = new BattleArchive(out, source), identities = new Map()
+if (c.identityCacheFile && fs.existsSync(c.identityCacheFile) && fs.statSync(c.identityCacheFile).size <= 2 * 1024 * 1024) {
+  try { for (const row of JSON.parse(fs.readFileSync(c.identityCacheFile)).names || []) if (validIdentity(row)) identities.set(row.idHash, { ...row, cached: true }) } catch {}
+}
 const write = (file, data) => publisher.write(path.join(out, file), data)
 const append = (file, data) => ledger.append(path.join(out, file), JSON.stringify(data) + '\n')
 const counters = { packets: 0, blocks: 0, statistics: 0, damageEvents: 0, buffEvents: 0, rejectedEvents: 0, settlements: 0 }
@@ -55,28 +59,32 @@ function publish(force = false) {
 }
 function identify(rows, job) {
   for (const row of rows) {
-    if (!/^[a-f0-9]{16}$/.test(row.idHash)) continue
+    if (!validIdentity(row)) continue
     const entry = { ...row, observedAt: job.observedAt, transportRecordOrdinal: job.recordOrdinal }
     identities.set(row.idHash, entry); append('identity-events.jsonl', { ...entry, source })
   }
-  if (rows.length) write('identities.json', { source, names: [...identities.values()] })
+  if (rows.length) {
+    write('identities.json', { source, names: [...identities.values()] })
+    if (c.identityCacheFile) publisher.write(c.identityCacheFile, { names: [...identities.values()].slice(-5000) })
+    latest.actors = latest.actors.map(a => ({ ...a, ...(identities.get(a.idHash) || {}) }))
+  }
 }
 function receive(m, job) {
   const stamp = { source, observedAt: job.observedAt, transportRecordOrdinal: job.recordOrdinal }
-  for (const e of m.buffEvents || []) append('buff-events.jsonl', { ...e, ...stamp, sequence: ++counters.buffEvents })
-  if (m.buffCoverage) buffCoverage = m.buffCoverage
-  for (const wrapper of m.events || []) {
-    const result = damageEventsFromAreaSync(Buffer.from(wrapper.data, 'base64'), wrapper.targetActorHash, wrapper.methodIndex)
-    for (const e of result.events) append('damage-events.jsonl', { ...e, ...stamp, sequence: ++counters.damageEvents })
-    for (const rejection of result.rejected) { counters.rejectedEvents++; append('rejected-events.jsonl', { ...rejection, ...stamp }) }
-  }
   identify(m.identityRows || [], job)
   for (const wrapper of m.identities || []) {
     try { identify(namesFromMatchWrapper(Buffer.from(wrapper.data, 'base64'), wrapper.methodIndex), job) }
     catch (error) { append('rejected-identities.jsonl', { ...stamp, reason: error.message }) }
   }
+  for (const e of m.buffEvents || []) append('buff-events.jsonl', { ...labelEvent(e, identities), ...stamp, sequence: ++counters.buffEvents })
+  if (m.buffCoverage) buffCoverage = m.buffCoverage
+  for (const wrapper of m.events || []) {
+    const result = damageEventsFromAreaSync(Buffer.from(wrapper.data, 'base64'), wrapper.targetActorHash, wrapper.methodIndex)
+    for (const e of result.events) append('damage-events.jsonl', { ...labelEvent(e, identities), ...stamp, sequence: ++counters.damageEvents })
+    for (const rejection of result.rejected) { counters.rejectedEvents++; append('rejected-events.jsonl', { ...rejection, ...stamp }) }
+  }
   for (const e of m.encounterEvents || []) {
-    append('encounter-events.jsonl', { ...e, ...stamp })
+    append('encounter-events.jsonl', { ...labelEvent(e, identities), ...stamp })
     if (e.kind === 'boss-battle-state') {
       if (e.initial) clock = null
       if (e.active && e.previousActive === false && e.stateChanged && !e.initial) {
@@ -105,7 +113,7 @@ function receive(m, job) {
     } catch (error) { counters.rejectedEvents++; append('rejected-statistics.jsonl', { ...stamp, reason: error.message }) }
   }
 }
-const py = spawn(c.python, [path.join(__dirname, 'p1-live-proto.py')], { windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] })
+const py = spawn(c.python, [path.join(__dirname, 'p1-live-proto.py'), ...(c.clientBuildSha256 ? ['--client-build', c.clientBuildSha256] : [])], { windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] })
 let readyResolve
 const ready = new Promise(resolve => { readyResolve = resolve })
 readline.createInterface({ input: py.stdout }).on('line', line => {

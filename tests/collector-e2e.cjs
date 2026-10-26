@@ -7,7 +7,10 @@ const root = path.resolve(__dirname, '..'), local = path.join(root, '.local/coll
 fs.mkdirSync(local, { recursive: true })
 const python = path.join(root, 'runtime/collector/runtime/python/python.exe')
 const b64 = b => Buffer.from(b).toString('base64')
-const bytes = s => ({ svalue: b64(s) }), index = n => ({ sindex: n }), integer = n => ({ ivalue: n })
+const currentBuild = process.argv.includes('--current-build')
+const build = require('../collector/config/client-build.json').builds.find(p => p.id === 'cn-win64r-20261023')
+const currentNames = require('../collector/config/presets/cn-win64r-20261023.json').names
+const bytes = s => ({ svalue: b64(s) }), index = n => ({ sindex: currentBuild ? currentNames.indexOf(mapping.rows.find(r => r.index === n)?.name) : n }), integer = n => ({ ivalue: n })
 const prop = (name, value) => ({ name: index(name), value })
 const clock = active => ({ name: index(2817), dict: { item: [prop(4662, { bvalue: active })] } })
 const mapping = JSON.parse(fs.readFileSync(path.join(root, 'runtime/collector/evidence/p1/encounter-retest/index-names.json')))
@@ -20,6 +23,7 @@ const counters = (amount, seconds = 0) => area(0x2e77db68, [{ npc_no: 7, stat_ty
   statistic: { 'actor-a': { damage: amount, heal: 0, absorb_dmg: 20 }, 'actor-b': { damage: 0, heal: 50, absorb_dmg: 0 } } }])
 const inner = [100, 100, Buffer.from('actor-a'), 456, 789, null, null, null, 1, null, null, 0, null, 0, 1, null, null]
 const messages = [
+  { methodIndex: 12, message: { name: b64('Avatar'), id: b64('actor-b'), guid: '3', props: { props: [{ name: index(1070), dict: { item: [prop(5982, bytes('队友示例'))] } }] } } },
   { methodIndex: 12, message: { name: b64('SpaceData'), id: b64('space'), guid: '2', props: { props: [clock(false)] } } },
   { methodIndex: 10, message: { guid: '2', props: [clock(true)] } },
   { methodIndex: 12, message: { name: b64('Avatar'), id: b64('actor-a'), guid: '1', props: { props: [{ name: index(1070), dict: { item: [prop(5982, bytes('离线验证角色'))] } }, buff] } } },
@@ -45,6 +49,7 @@ const lines = bodies.map((body, i) => {
 const packets = path.join(local, 'synthetic.tsv'); fs.writeFileSync(packets, lines.join('\n') + '\n')
 const config = path.join(local, 'config.json')
 fs.writeFileSync(config, JSON.stringify({ pid: 1, processStartUtc: '2026-01-01T00:00:00Z', serverEncryptedOrigin: 10000,
+  ...(currentBuild ? { clientBuildSha256: build.imageSha256 } : {}),
   initialStateFile: stateFile, initialStateSha256: crypto.createHash('sha256').update(fs.readFileSync(stateFile)).digest('hex'), python,
   flow: { serverAddress: '192.0.2.1', serverPort: 2345, clientAddress: '192.0.2.2', clientPort: 4567 } }))
 const output = path.join(local, 'capture')
@@ -54,7 +59,10 @@ const rows = name => fs.readFileSync(path.join(output, name), 'utf8').trim().spl
 const stats = rows('statistics.jsonl'), hits = rows('damage-events.jsonl'), buffs = rows('buff-events.jsonl'), settlement = rows('settlement-details.jsonl')
 assert.equal(stats.length, 3); assert.equal(stats.at(-1).actors[0].damage, 100); assert.equal(stats.at(-1).actors[0].name, '离线验证角色')
 assert.equal(hits.length, 1); assert.equal(hits[0].amount, 100); assert.equal(hits[0].rawSkillId, 456)
+assert.equal(hits[0].sourceActorName, '离线验证角色')
 assert.equal(buffs.length, 1); assert.equal(buffs[0].buffNo, 123); assert.equal(buffs[0].charge_level, 2)
+assert.equal(buffs[0].sourceActorName, '队友示例'); assert.equal(buffs[0].targetActorName, '离线验证角色')
+assert.equal(buffs[0].propertyPreset, currentBuild ? build.id : 'cn-win64rh-20261013')
 assert.equal(settlement[0].actors[0].targets[0].categories.damage.skills[0].amount, 100)
 assert.equal(fs.readdirSync(path.join(output, 'battles')).length, 1)
 assert.equal(JSON.parse(fs.readFileSync(path.join(output, 'completion.json'))).status, 'replay-complete')

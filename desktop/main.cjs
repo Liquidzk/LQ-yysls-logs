@@ -144,7 +144,7 @@ async function start() {
       { label: '重新加载', role: 'reload' }, { label: '放大', role: 'zoomIn' }, { label: '缩小', role: 'zoomOut' }, { label: '原始比例', role: 'resetZoom' },
       { label: '悬浮窗鼠标穿透', click: toggleLock }
     ] },
-    { label: '帮助', submenu: [{ label: '关于与数据范围', click: () => dialog.showMessageBox(main, { title: '燕云 Logs 0.4', message: '燕云 Logs · 实时采集与战斗复盘',
+    { label: '帮助', submenu: [{ label: '关于与数据范围', click: () => dialog.showMessageBox(main, { title: '燕云 Logs ' + app.getVersion(), message: '燕云 Logs · 实时采集与战斗复盘',
       detail: '手动选择进程后采集服务器消息，也可解析本地 CLv2。\n网络事件按接收时间记录，完整队友动作及私有 Buff 尚未验证，未启用 rDPS。\n悬浮界面源于 Kagerou，保留 GPL-3.0-or-later 与第三方声明。' }) }] }
   ]
   Menu.setApplicationMenu(Menu.buildFromTemplate(menu))

@@ -9,7 +9,7 @@ let toastTimer
 function toast(message) { $('toast').textContent = message; $('toast').hidden = false; clearTimeout(toastTimer); toastTimer = setTimeout(() => { $('toast').hidden = true }, 6500) }
 async function api(url) { const response = await fetch(url); const data = await response.json(); if (!response.ok) throw Error(data.error || '读取失败'); return data }
 function player(id) { return state.report?.identities[id] || state.report?.actors.find(a => a.idHash === id)?.name || (id ? '实体 · ' + id.slice(-6) : '未知') }
-function skill(id) { return id == null ? '技能未记录' : state.names.skills?.[String(id)] || '技能 #' + id }
+function skill(id) { return id == null || id === '' ? '技能未记录' : state.names.skills?.[String(id)] || '技能 #' + id }
 function buff(id) { return id == null ? 'Buff 未记录' : state.names.buffs?.[String(id)] || 'Buff #' + id }
 function title(s) { return s?.npcNo && state.names.npcs?.[String(s.npcNo)] ? (s.kind === 'battle' ? '战斗 · ' : '采集会话 · ') + state.names.npcs[String(s.npcNo)] : s?.title || '当前采集会话' }
 function mode(value) { state.serial++; state.mode = value; $('binding-panel').hidden = value !== 'live'; document.querySelectorAll('[data-mode]').forEach(b => b.classList.toggle('selected', b.dataset.mode === value)) }
@@ -68,6 +68,13 @@ function render() {
     skillRows.push(`<tr><td>${esc(player(a.actorHash))}</td><td>${esc(player(target.targetActorHash))}</td><td>${esc(skill(s.skillId))}</td><td>${esc({ damage: '伤害', heal: '治疗', absorb_dmg: '承伤字段' }[kind] || kind)}</td><td class="numeric">${num(s.amount)}</td></tr>`)
   }
   $('skills-table').innerHTML = skillRows.join('') || '<tr><td colspan="5">尚未取得该场战斗的服务器技能结算。</td></tr>'
+  $('observed-skills-table').innerHTML = (r.observedSkills || []).map((s, i) => `<tr class="event" data-skill-row="${i}"><td>${esc(player(s.sourceActorHash))} → ${esc(player(s.targetActorHash))}</td><td>${esc(skill(s.skillId))}</td><td class="numeric">${num(s.notificationCount)}</td><td class="numeric">${num(s.amount)}${s.measuredCount < s.notificationCount ? '（部分）' : ''}</td><td class="numeric">${r.duration > 0 && s.amount != null ? num(s.amount / r.duration) : '—'}</td><td>${clock(s.first)} / ${clock(s.last)}</td></tr>`).join('') || '<tr><td colspan="6">尚未收到该范围内的技能命中通知；无需等到战斗结算。</td></tr>'
+  document.querySelectorAll('[data-skill-row]').forEach(el => { el.onclick = () => {
+    const s = r.observedSkills[Number(el.dataset.skillRow)]
+    state.search = s.skillId; state.actor = s.sourceActorHash || ''; state.kind = 'hit'; state.offset = 0
+    $('event-search').value = state.search; $('kind-filter').value = 'hit'
+    selectTab('events', true)
+  } })
   const actors = { ...r.identities, ...Object.fromEntries(r.actors.map(a => [a.idHash, a.name])) }
   $('actor-filter').innerHTML = '<option value="">全部角色</option>' + Object.entries(actors).map(([id, name]) => `<option value="${esc(id)}">${esc(name)}</option>`).join('')
   $('actor-filter').value = state.actor
@@ -75,7 +82,7 @@ function render() {
   $('events-table').innerHTML = r.events.map((e, i) => {
     const d = e.data
     const content = e.kind === 'hit' ? `${skill(d.rawSkillId)} · 通知数值 ${num(d.amount)}` : e.kind === 'buff' ? `${buff(d.buffNo)} · ${{ apply_candidate: '添加候选', update: '更新', snapshot: '初始快照', remove_candidate: '移除候选', field_patch: '属性变化' }[d.kind] || d.kind} · 层数 ${d.charge_level ?? d.level ?? '未知'}` : d.kind || '结算详情'
-    return `<tr class="event" data-event="${i}"><td>${clock(e.t)}</td><td>${esc(labels[e.kind] || e.kind)}</td><td>${esc(player(d.sourceActorHash))} → ${esc(player(d.targetActorHash))}</td><td>${esc(content)}</td></tr>`
+    return `<tr class="event" data-event="${i}"><td>${clock(e.t)}</td><td>${esc(labels[e.kind] || e.kind)}</td><td>${esc(d.sourceActorName || player(d.sourceActorHash))} → ${esc(d.targetActorName || player(d.targetActorHash))}</td><td>${esc(content)}</td></tr>`
   }).join('') || '<tr><td colspan="4">没有匹配的观测记录。</td></tr>'
   document.querySelectorAll('[data-event]').forEach(el => { el.onclick = () => { $('detail-content').textContent = JSON.stringify(r.events[Number(el.dataset.event)], null, 2); $('detail-dialog').showModal() } })
   $('page').textContent = `${num(r.totalEvents)} 条记录 · 第 ${Math.floor(r.offset / 100) + 1} 页`
@@ -84,11 +91,12 @@ function render() {
   const coords = points.map(p => `${15 + p.t / end * 870},${125 - p.damage / peak * 110}`).join(' ')
   $('chart').innerHTML = '<path d="M15 125H885 M15 70H885 M15 15H885" stroke="#314344" stroke-width="1"/>' + (points.length ? `<polyline points="${coords}" fill="none" stroke="#aaca89" stroke-width="2.5"/><text x="15" y="148" fill="#91a9a4" font-size="11">00:00</text><text x="830" y="148" fill="#91a9a4" font-size="11">${clock(end)}</text>` : '<text x="340" y="75" fill="#91a9a4" font-size="14">等待服务器统计快照</text>')
 }
-function selectTab(tab) {
+function selectTab(tab, keepFilter = false) {
   state.tab = tab
   document.querySelectorAll('[data-tab]').forEach(b => b.classList.toggle('selected', b.dataset.tab === tab))
   for (const name of ['team', 'skills', 'events']) $(name + '-panel').hidden = name !== (tab === 'buffs' ? 'events' : tab)
-  if (tab === 'buffs' || tab === 'events') { state.kind = tab === 'buffs' ? 'buff' : 'all'; $('kind-filter').value = state.kind; state.offset = 0; load().catch(e => toast(e.message)) }
+  if (!keepFilter) { state.kind = tab === 'buffs' ? 'buff' : 'all'; state.search = ''; state.actor = ''; $('event-search').value = ''; $('kind-filter').value = state.kind; state.offset = 0 }
+  load().catch(e => toast(e.message))
 }
 document.querySelectorAll('[data-tab]').forEach(b => { b.onclick = () => selectTab(b.dataset.tab) })
 $('search').onclick = () => { state.kind = $('kind-filter').value; state.actor = $('actor-filter').value; state.search = $('event-search').value.trim(); state.offset = 0; load().catch(e => toast(e.message)) }

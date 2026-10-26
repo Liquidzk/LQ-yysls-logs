@@ -188,6 +188,25 @@ class WireStore:
             identities = {r['idHash']: r.get('name', '') for r in identities if r.get('idHash')}
             actors = [{**a, 'name': identities.get(a.get('idHash')) or a.get('name') or '玩家 · ' + str(a.get('idHash', ''))[-6:]} for a in latest.get('actors', [])]
             stats = {r['kind']: r['n'] for r in db.execute('SELECT kind,count(*) n FROM events WHERE ' + where + ' GROUP BY kind', values)}
+            # Aggregate the entire selected range, independently of the paginated
+            # event list. Notifications are not casts or server final settlement.
+            skill_where, skill_values = where + " AND kind='hit'", list(values)
+            if actor:
+                skill_where += ' AND (actor=? OR target=?)'; skill_values.extend([actor, actor])
+            if search:
+                skill_where += ' AND skill=?'; skill_values.append(search)
+            observed_skills = [dict(row) for row in db.execute('''
+                SELECT actor AS sourceActorHash,target AS targetActorHash,skill AS skillId,
+                       count(*) AS notificationCount,
+                       sum(CASE WHEN json_type(payload,'$.amount') IN ('integer','real')
+                                THEN json_extract(payload,'$.amount') END) AS amount,
+                       count(CASE WHEN json_type(payload,'$.amount') IN ('integer','real') THEN 1 END) AS measuredCount,
+                       min(ts) AS firstObservedAt,max(ts) AS lastObservedAt
+                FROM events WHERE ''' + skill_where + '''
+                GROUP BY actor,target,skill ORDER BY amount DESC,notificationCount DESC''', skill_values)]
+            for row in observed_skills:
+                row['first'] = row.pop('firstObservedAt') - lower
+                row['last'] = row.pop('lastObservedAt') - lower
             # Settlements may arrive after the battle end signal. Require the stored battle anchor when available.
             details = []
             for r in db.execute('SELECT payload FROM events WHERE root=? AND kind=? ORDER BY ts DESC', (root_key, 'settlement')):
@@ -210,6 +229,12 @@ class WireStore:
             offset = max(0, int(offset))
             rows = db.execute('SELECT * FROM events WHERE ' + where + ' ORDER BY ts,stream,ordinal LIMIT 100 OFFSET ?', [*values, offset]).fetchall()
         events = [{'kind': r['kind'], 't': r['ts'] - lower, 'data': json.loads(r['payload'])} for r in rows]
+        # Names may arrive after a hit. Resolve the retained ID against the
+        # session's later authoritative name observation without rewriting raw logs.
+        for event in events:
+            data = event['data']
+            data['sourceActorName'] = identities.get(data.get('sourceActorHash')) or data.get('sourceActorName')
+            data['targetActorName'] = identities.get(data.get('targetActorHash')) or data.get('targetActorName')
         step = max(1, len(snapshots) // 300)
         points = [{'t': timestamp(s['observedAt']) - lower, 'damage': sum(a.get('damage', 0) for a in s['actors'])} for s in snapshots[::step]]
         if snapshots and (not points or points[-1]['t'] != timestamp(snapshots[-1]['observedAt']) - lower):
@@ -218,6 +243,6 @@ class WireStore:
         return {'key': key, 'kind': 'battle' if battle else 'session', 'start': lower, 'end': upper, 'duration': duration,
                 'clockBasis': 'server-summary' if latest.get('timeCostSeconds') else 'packet-reception' if duration else 'unknown',
                 'actors': actors, 'identities': identities, 'counts': stats, 'points': points, 'events': events, 'totalEvents': total,
-                'offset': offset, 'settlements': details, 'coverage': read_json(root / 'buff-coverage.json', {}),
+                'offset': offset, 'settlements': details, 'observedSkills': observed_skills, 'coverage': read_json(root / 'buff-coverage.json', {}),
                 'health': entry['latest'].get('health', {}), 'indexing': more, 'skippedRows': errors,
                 'notice': '网络观测记录；事件时间为本机接收时间。技能通知不等于完整施法，队友私有 Buff 与完整覆盖尚未验证。'}

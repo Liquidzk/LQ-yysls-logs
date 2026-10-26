@@ -66,6 +66,27 @@ class WireStoreTests(unittest.TestCase):
         r = self.store.report(self.key, actor='a', offset=200)
         self.assertEqual(r['totalEvents'], 205); self.assertEqual(len(r['events']), 5)
         self.assertEqual(self.store.report(self.key, actor='not-present')['totalEvents'], 0)
+        self.assertEqual(r['observedSkills'][0]['notificationCount'], 205)
+        self.assertEqual(r['observedSkills'][0]['amount'], sum(range(205)))
+
+    def test_live_skill_summary_without_settlement_preserves_zero_and_unknown(self):
+        for skill, amount in [(123, 20), (123, 0), (123, 30), (456, None)]:
+            self.append('damage-events.jsonl', {'observedAt': self.stat['observedAt'], 'sourceActorHash': 'a', 'targetActorHash': 'b', 'rawSkillId': skill, 'amount': amount})
+        r = self.store.report(self.key, search='123')
+        self.assertEqual(r['settlements'], [])
+        self.assertEqual(r['observedSkills'][0]['amount'], 50)
+        self.assertEqual(r['observedSkills'][0]['notificationCount'], 3)
+        unknown = self.store.report(self.key, search='456')['observedSkills'][0]
+        self.assertIsNone(unknown['amount']); self.assertEqual(unknown['measuredCount'], 0)
+        self.assertEqual(r['actors'][0]['damage'], 100)
+
+    def test_names_arriving_after_hits_resolve_to_the_same_actor_id(self):
+        self.append('damage-events.jsonl', {'observedAt': self.stat['observedAt'], 'sourceActorHash': 'a', 'targetActorHash': 'b', 'rawSkillId': 123, 'amount': 5})
+        (self.root / 'identities.json').write_text(json.dumps({'names': [{'idHash': 'a', 'name': '角色甲'}, {'idHash': 'b', 'name': '角色乙'}]}), encoding='utf8')
+        r = self.store.report(self.key)
+        self.assertEqual(r['actors'][0]['name'], '角色甲')
+        self.assertEqual(r['events'][0]['data']['sourceActorName'], '角色甲')
+        self.assertEqual(r['events'][0]['data']['targetActorName'], '角色乙')
 
     def test_unknown_clock_stays_unknown_for_whole_session(self):
         self.stat['timeCostSeconds'] = 0

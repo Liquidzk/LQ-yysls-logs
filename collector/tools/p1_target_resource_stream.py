@@ -9,9 +9,9 @@ class TargetResourceStream(BuffStream):
   super().invalidate(reason,actor,clear)
   if actor is None:self.positive.clear()
   else:self.positive.discard(actor)
- def value(self,v):
+ def key(self,v):
   if v.HasField('svalue') and v.svalue==b'2':return '2'
-  return super().value(v)
+  return super().key(v)
  def consume(self,msg):
   old=set(self.positive); self._ids(msg);out=[]
   for actor in old-self.positive:out.append({'targetActorHash':actor,'kind':'target-qi-state','weak':None,'reason':'identity-invalidated'})
@@ -21,8 +21,8 @@ class TargetResourceStream(BuffStream):
    if 'guid' in fields and m.HasField('guid'):actor=self.guids.get(m.guid,actor)
    if m.DESCRIPTOR.name=='PropItem':
     if m.HasField('eid') and m.eid:actor=hashed(m.eid)
-    if m.path:path=[self.value(x) for x in m.path]
-    if m.HasField('name'):path=path+[self.value(m.name)]
+    if m.path:path=[self.key(x) for x in m.path]
+    if m.HasField('name'):path=path+[self.key(m.name)]
     if len(path)==3 and path[:2]==['attr','dynamic_attr'] and path[2] in ('2',2) and m.HasField('value') and self.classes.get(actor)=='Npc':
      val=self.value(m.value)
      if initial:self.positive.discard(actor)
