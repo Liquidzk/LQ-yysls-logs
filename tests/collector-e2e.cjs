@@ -49,6 +49,7 @@ const actionQueue = (operation) => ({ name:index(field('sync_event_data')), dict
 ]}}]} })
 messages[3].message.props.props.push(actionQueue(49))
 messages.push({ methodIndex:10, message:{guid:'1',props:[actionQueue(11)]} })
+messages.push({methodIndex:10,message:{guid:'1',props:[{path:[index(field('sync_event_data'))],name:bytes('skill'),oper:4}]}})
 if (currentBuild) {
   const salt = 0x76543210fedcba98n
   const hp = n => { const b = Buffer.alloc(8); b.writeDoubleLE(n); return integer(BigInt.asIntN(64,b.readBigUInt64LE() ^ salt).toString()) }
@@ -109,8 +110,10 @@ assert.equal(result.status, 0, result.stderr)
 const rows = name => fs.readFileSync(path.join(output, name), 'utf8').trim().split('\n').map(JSON.parse)
 const stats = rows('statistics.jsonl'), hits = rows('damage-events.jsonl'), buffs = rows('buff-events.jsonl'), settlement = rows('settlement-details.jsonl')
 const actions = rows('action-events.jsonl')
-assert.deepEqual(actions.map(a=>a.actionKind),['snapshot','cast'])
-assert.equal(actions[1].sourceActorName,'离线验证角色');assert.equal(actions[1].rawSkillId,456)
+assert.deepEqual(actions.filter(a=>a.actionKind!=='visibility').map(a=>a.actionKind),['snapshot','boundary','cast','end'])
+const cast=actions.find(a=>a.actionKind==='cast'), actionEnd=actions.find(a=>a.actionKind==='end')
+assert.equal(cast.sourceActorName,'离线验证角色');assert.equal(cast.rawSkillId,456)
+assert.equal(actionEnd.identifierHash,cast.identifierHash);assert.equal(actionEnd.endReason,'queue-removed')
 assert.equal(stats.length, 5); assert.equal(stats.at(-1).actors[0].damage, 100); assert.equal(stats.at(-1).actors[0].name, '离线验证角色')
 assert.equal(stats[2].battleTimer.phase, 'ended'); assert.equal(stats[2].battleTimer.endReason, 'server-dungeon-finish')
 assert.equal(stats[2].battleTimer.endObservedAt, '2026-01-01T00:00:07.000Z')

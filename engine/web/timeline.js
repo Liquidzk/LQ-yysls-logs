@@ -6,7 +6,7 @@ window.WireTimeline = (() => {
   const clock = t => `${Math.floor(t / 60).toString().padStart(2, '0')}:${(t % 60).toFixed(1).padStart(4, '0')}`
   const colors = ['#ad9bd3','#82b99d','#80accd','#d3ba71','#c68ea7','#82bbb5','#d49370']
   let report, names = {}, data, key, actor = '', from = 0, to = 1, ticket = 0, fetchStamp, chooseBattle
-  let selected = new Set(), initialized = false, hoverPoints = []
+  let selected = new Set(), initialized = false, hoverPoints = [], orderPage = 0
   const person = id => report?.identities?.[id] || report?.actors?.find(a => a.idHash === id)?.name || (id ? '实体 · ' + id.slice(-6) : '来源未知')
   const buff = id => names.buffs?.[id] || `Buff #${id}`
   const skill = id => names.skills?.[id] || (id == null || Number(id) <= 0 ? '技能编号未下发' : `技能 #${id}`)
@@ -32,7 +32,11 @@ window.WireTimeline = (() => {
     $('tl-buff-search').oninput = picker
     $('tl-buff-clear').onclick = () => { selected.clear(); picker(); buffLanes() }
     $('tl-action-kind').onchange = actionLanes
-    $('tl-skill-search').oninput = actionLanes
+    $('tl-skill-search').oninput = () => { orderPage=0; actionLanes() }
+    $('tl-order-kind').onchange = () => { orderPage=0; actionSequence() }
+    $('tl-gap-min').oninput = () => { orderPage=0; actionSequence() }
+    $('tl-order-prev').onclick = () => { orderPage--; actionSequence() }
+    $('tl-order-next').onclick = () => { orderPage++; actionSequence() }
     $('tl-dps').onmousemove = event => {
       if (!hoverPoints.length) return
       const bounds = $('tl-dps').getBoundingClientRect()
@@ -126,30 +130,75 @@ window.WireTimeline = (() => {
       })
     })
   }
+  const seconds = n => Number.isFinite(n) ? n.toFixed(3) + ' 秒' : '未确认'
+  const exactTime = t => `${Math.floor(t/60).toString().padStart(2,'0')}:${(t%60).toFixed(3).padStart(6,'0')}`
+  const reason = r => ({'queue-removed':'同一技能同步条目已移除','queue-replaced':'下一动作覆盖，真实结束未确认','next-action':'下一动作开始，真实结束未确认','range-end':'记录结束时仍未确认结束','space-data-reset':'场景切换，观测中断','entity-snapshot':'重新收到实体快照','server-skill-end':'技能结束同步','observed-aoi-leave':'离开可见范围','observed-aoi-remove':'实体从可见范围移除','guid-rebound':'实体标识重新绑定','queue-container-reset':'同步动作状态重置'}[r] || r || '边界未知')
+  function spanDetail(v) {
+    detail(`${person(v.actor)} · 第 ${v.order} 个动作 · ${skill(v.skillId)}`, [
+      `${exactTime(v.start)} — ${exactTime(v.end)} · 同步动作时长 ${seconds(v.duration)}`,
+      v.duration==null?'条纹区间仅表示观测范围，不能当作实际持续时间。':`与上一动作间隔 ${seconds(v.gapBefore)}`,
+      `结束依据：${reason(v.endReason)}`, `目标：${person(v.target)}`,
+      '这是同步队列中观测到的动作占用，不等同客户端动画帧、前摇或后摇；延迟命中可能在动作结束后到达。'])
+  }
+  function actionSequence() {
+    if (!data) return
+    const timing=data.actionTiming || {spans:[],gaps:[]}, roster=actor?[actor]:report.actors.map(a=>a.idHash)
+    const query=$('tl-skill-search').value.trim().toLowerCase(), matches=id=>`${skill(id)} ${id}`.toLowerCase().includes(query)
+    const gapMode=$('tl-order-kind').value==='gaps', minimum=Math.max(0,Number($('tl-gap-min').value)||0)
+    const allSpans=timing.spans.filter(v=>roster.includes(v.actor)&&v.end>=from&&v.start<=to)
+    const allGaps=timing.gaps.filter(v=>roster.includes(v.actor)&&v.start>=from&&v.end<=to)
+    $('tl-action-summary').innerHTML=roster.map(id=>{
+      const spans=allSpans.filter(v=>v.actor===id), gaps=allGaps.filter(v=>v.actor===id&&v.duration>=minimum)
+      return `<div><b>${esc(person(id))}</b><span>${spans.filter(v=>v.duration!=null).length} / ${spans.length} 动作起止完整</span><span>${gaps.length} 段待复查间隔 · ${seconds(gaps.reduce((n,g)=>n+g.duration,0))}</span></div>`
+    }).join('')
+    const rows=gapMode?allGaps.filter(v=>v.duration>=minimum&&(matches(v.previousSkill)||matches(v.nextSkill))).sort((a,b)=>b.duration-a.duration):allSpans.filter(v=>matches(v.skillId))
+    const size=60, pages=Math.max(1,Math.ceil(rows.length/size));orderPage=Math.max(0,Math.min(orderPage,pages-1))
+    const shown=rows.slice(orderPage*size,(orderPage+1)*size)
+    $('tl-order-head').innerHTML=gapMode?'<tr><th>角色</th><th>区间</th><th>间隔</th><th>前后动作</th><th></th></tr>':'<tr><th>角色／顺序</th><th>动作</th><th>开始 → 结束</th><th>动作时长</th><th>前次间隔</th><th></th></tr>'
+    $('tl-order-rows').innerHTML=shown.map((v,i)=>gapMode?
+      `<tr><td>${esc(person(v.actor))}</td><td>${exactTime(v.start)} → ${exactTime(v.end)}</td><td>${seconds(v.duration)}</td><td>${esc(skill(v.previousSkill))} → ${esc(skill(v.nextSkill))}</td><td><button data-near="${i}">查看附近</button></td></tr>`:
+      `<tr><td>${esc(person(v.actor))}<small>第 ${v.order} 个动作</small></td><td><button data-span-detail="${i}">${esc(skill(v.skillId))}</button><small>#${esc(v.skillId)}</small></td><td>${exactTime(v.start)} → ${v.endKnown?exactTime(v.end):'未确认'}${!v.startKnown?'<small>开始边界不完整</small>':''}</td><td>${seconds(v.duration)}</td><td>${seconds(v.gapBefore)}</td><td><button data-near="${i}">查看附近</button></td></tr>`).join('') || `<tr><td colspan="6" class="muted">${gapMode?'没有满足条件的已观测间隔；不表示全程没有空档。':'没有匹配的动作区间。'}</td></tr>`
+    $('tl-order-count').textContent=`${rows.length} 条 · 第 ${orderPage+1} / ${pages} 页`
+    $('tl-order-prev').disabled=orderPage===0;$('tl-order-next').disabled=orderPage>=pages-1
+    $('tl-order-rows').querySelectorAll('[data-span-detail]').forEach(b=>{b.onclick=()=>spanDetail(shown[Number(b.dataset.spanDetail)])})
+    $('tl-order-rows').querySelectorAll('[data-near]').forEach(b=>{b.onclick=()=>{const v=shown[Number(b.dataset.near)];actor=v.actor;from=Math.max(0,v.start-2);to=Math.min(data.duration,v.end+2);orderPage=0;render();$('tl-actions').scrollIntoView({block:'center'})}})
+  }
   function actionLanes() {
     if (!data) return
     const mode=$('tl-action-kind').value, query=$('tl-skill-search').value.trim().toLowerCase()
     const roster=actor?[actor]:report.actors.map(a=>a.idHash)
-    const events=data.actions.filter(e=>roster.includes(e.actor)&&e.t>=from&&e.t<=to&&(mode==='all'||(mode==='hit'?e.kind==='hit':e.kind!=='hit'))&&`${skill(e.skillId)} ${e.skillId}`.toLowerCase().includes(query))
-    const labels={cast:'技能开始',end:'技能结束',segment:'技能分段',snapshot:'入场时技能快照',hit:'命中／治疗通知'}
+    const events=data.actions.filter(e=>!['visibility','boundary'].includes(e.kind)&&roster.includes(e.actor)&&e.t>=from&&e.t<=to&&(mode==='all'||(mode==='hit'?e.kind==='hit':e.kind!=='hit'))&&`${skill(e.skillId)} ${e.skillId}`.toLowerCase().includes(query))
+    const labels={cast:'技能开始',end:'同步动作结束',boundary:'结束边界未确认',visibility:'观测范围改变',segment:'技能分段',snapshot:'入场时技能快照',hit:'命中／治疗通知'}
     const describe=e=>`${clock(e.t)} · ${labels[e.kind]||e.kind} · ${skill(e.skillId)} #${e.skillId ?? '未记录'}\n${person(e.actor)} → ${person(e.target)}${e.amount!=null?' · 数值 '+fmt(e.amount):''}${e.segment!=null?' · 第 '+e.segment+' 段':''}`
     $('tl-action-count').textContent=`当前范围 ${events.length.toLocaleString()} 条动作／通知`
-    $('tl-actions-note').textContent=data.actions.some(e=>e.kind==='cast')?'施放按服务器同步记录；多段命中分别保留。没有动作通知的技能无法补出起手时间。':'这份旧记录仅保存命中通知，未保存技能起手。新版开始采集后会同时保存服务器同步的开始、结束及分段；旧记录不会把命中猜成施放。'
+    $('tl-actions-note').textContent=data.actionTiming?.basis || (data.actions.some(e=>e.kind==='cast')?'施放按服务器同步记录；多段命中分别保留。没有动作通知的技能无法补出起手时间。':'这份旧记录仅保存命中通知，未保存技能起手。新版开始采集后会同时保存服务器同步的开始、结束及分段；旧记录不会把命中猜成施放。')
     $('tl-actions').innerHTML=axis() + (roster.map((id,index)=>{
       const rows=events.filter(e=>e.actor===id)
+      const spans=(data.actionTiming?.spans||[]).filter(v=>v.actor===id&&v.end>=from&&v.start<=to&&`${skill(v.skillId)} ${v.skillId}`.toLowerCase().includes(query))
+      const gaps=(data.actionTiming?.gaps||[]).filter(v=>v.actor===id&&v.end>from&&v.start<to)
+      const bars=mode==='hit'?'':spans.map((v,i)=>{
+        const width=Math.max(1,x(v.end)-x(v.start)), uncertain=v.duration==null
+        const title=esc(`${skill(v.skillId)} · ${exactTime(v.start)} — ${v.endKnown?exactTime(v.end):'未确认'} · ${seconds(v.duration)}`)
+        return `<g data-span="${i}" role="button" tabindex="0" aria-label="${title}"><rect x="${x(v.start)}" y="5" width="${width}" height="24" rx="2" fill="${color(v.skillId)}" opacity="${uncertain?'.3':'.85'}"/>${uncertain?`<rect x="${x(v.start)}" y="5" width="${width}" height="24" fill="url(#action-hatch-${index})"/>`:''}${width>=100?`<clipPath id="action-text-${index}-${i}"><rect x="${x(v.start)+3}" y="5" width="${Math.max(0,width-6)}" height="24"/></clipPath><text x="${x(v.start)+5}" y="22" font-size="13" fill="${uncertain?'#d5dfdb':'#122020'}" pointer-events="none" clip-path="url(#action-text-${index}-${i})">${esc(skill(v.skillId))}</text>`:''}<title>${title}</title></g>`
+      }).join('')
+      const pauses=mode==='hit'?'':gaps.map(v=>`<rect x="${x(v.start)}" y="7" width="${Math.max(.5,x(v.end)-x(v.start))}" height="20" fill="#8c999a12" stroke="#849698" stroke-dasharray="2 3"><title>待复查间隔 ${seconds(v.duration)}；不能直接判定为散步</title></rect>`).join('')
       const marks=rows.map((e,i)=>{
-        const cx=x(e.t), cy=12+(i%4)*12, title=esc(describe(e))
+        if (['visibility','boundary'].includes(e.kind)) return ''
+        const cx=x(e.t), cy=42+(i%3)*11, title=esc(describe(e))
         const shape=e.kind==='hit'?`<circle cx="${cx}" cy="${cy}" r="3.2" fill="${color(e.skillId)}"/>`:e.kind==='segment'?`<path d="M${cx-3} ${cy-4}l7 4 -7 4Z" fill="none" stroke="${color(e.skillId)}"/>`:e.kind==='snapshot'?`<rect x="${cx-3}" y="${cy-3}" width="6" height="6" fill="none" stroke="#94a8a6"/>`:`<path d="M${cx} ${cy-4}l4 4 -4 4 -4 -4Z" fill="${e.kind==='end'?'none':color(e.skillId)}" stroke="${color(e.skillId)}"/>`
         return `<g data-action="${i}" role="button" tabindex="0" aria-label="${title}">${shape}<title>${title}</title></g>`
       }).join('')
-      return `<div class="tl-lane" data-action-lane="${index}"><div class="tl-lane-name"><b>${esc(person(id))}</b><small>${rows.length} 条</small></div><svg viewBox="0 0 1000 62" preserveAspectRatio="none" aria-label="${esc(person(id))} 动作时间线">${grid(62)}${marks}</svg><span class="tl-percent">${rows.length?'':'未观测'}</span></div>`
+      return `<div class="tl-lane" data-action-lane="${index}"><div class="tl-lane-name"><b>${esc(person(id))}</b><small>${rows.length} 条</small></div><svg viewBox="0 0 1000 78" preserveAspectRatio="none" aria-label="${esc(person(id))} 动作时间线"><defs><pattern id="action-hatch-${index}" width="8" height="8" patternUnits="userSpaceOnUse"><path d="M0 8L8 0" stroke="#bdc7c5" stroke-width="2" opacity=".5"/></pattern></defs>${grid(78)}${pauses}${bars}${marks}</svg><span class="tl-percent">${rows.length?'':'未观测'}</span></div>`
     }).join('') || '<p class="tl-empty">没有可显示的角色。</p>')
     $('tl-actions').querySelectorAll('[data-action-lane]').forEach(lane=>{
       const id=roster[Number(lane.dataset.actionLane)],rows=events.filter(e=>e.actor===id)
       const open=at=>detail(`${person(id)} · ${clock(at)} 附近的全部动作`,rows.filter(e=>Math.abs(e.t-at)<.3).map(describe))
-      lane.querySelector('svg').onclick=e=>{const el=e.target.closest('[data-action]');if(el)open(rows[Number(el.dataset.action)].t);else{const b=e.currentTarget.getBoundingClientRect();open(from+(e.clientX-b.left)/b.width*(to-from))}}
+      const spans=(data.actionTiming?.spans||[]).filter(v=>v.actor===id&&v.end>=from&&v.start<=to&&`${skill(v.skillId)} ${v.skillId}`.toLowerCase().includes(query))
+      lane.querySelectorAll('[data-span]').forEach(el=>{el.onkeydown=e=>{if(e.key==='Enter')spanDetail(spans[Number(el.dataset.span)])}})
+      lane.querySelector('svg').onclick=e=>{const bar=e.target.closest('[data-span]');if(bar){spanDetail(spans[Number(bar.dataset.span)]);return}const el=e.target.closest('[data-action]');if(el)open(rows[Number(el.dataset.action)].t);else{const b=e.currentTarget.getBoundingClientRect();open(from+(e.clientX-b.left)/b.width*(to-from))}}
       lane.querySelectorAll('[data-action]').forEach(el=>{el.onkeydown=e=>{if(e.key==='Enter')open(rows[Number(el.dataset.action)].t)}})
     })
+    actionSequence()
   }
   return { show }
 })()

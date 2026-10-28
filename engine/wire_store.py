@@ -27,7 +27,8 @@ def timestamp(value):
 class WireStore:
     streams = {'statistics.jsonl': 'counter', 'damage-events.jsonl': 'hit', 'buff-events.jsonl': 'buff',
                'encounter-events.jsonl': 'boundary', 'identity-events.jsonl': 'identity',
-               'settlement-details.jsonl': 'settlement', 'action-events.jsonl': 'action', 'buff-visibility.jsonl': 'buff'}
+               'settlement-details.jsonl': 'settlement', 'action-events.jsonl': 'action',
+               'action-reprocessed.jsonl': 'action', 'buff-visibility.jsonl': 'buff'}
 
     def __init__(self, data, capture_root):
         self.data, self.root = Path(data), Path(capture_root).resolve()
@@ -132,7 +133,14 @@ class WireStore:
     def sync(self, root):
         root_key, more, errors = self.key(root), False, 0
         with self.lock, self.connect() as db:
+            # Explicit offline rebuilds preserve original observations. Use one
+            # complete action stream, never combine old starts with new starts.
+            rebuilt = (root / 'action-reprocessed.jsonl').is_file()
+            inactive = 'action-events.jsonl' if rebuilt else 'action-reprocessed.jsonl'
+            db.execute('DELETE FROM events WHERE root=? AND stream=?', (root_key, inactive))
+            db.execute('DELETE FROM streams WHERE root=? AND file=?', (root_key, inactive))
             for file, kind in self.streams.items():
+                if file == inactive: continue
                 path = root / file
                 if not path.is_file():
                     continue
@@ -169,7 +177,7 @@ class WireStore:
         return more, errors
 
     def timeline(self, key, window=3):
-        from wire_timeline import dps_curves, buff_intervals, action_rows
+        from wire_timeline import dps_curves, buff_intervals, action_rows, action_timing
         entry = self.find(key)
         if not entry['battle']:
             return {'requiresBattle': True, 'key': key, 'battles': [x for x in self.list() if x['kind'] == 'battle' and x['parentKey'] == key]}
@@ -195,7 +203,7 @@ class WireStore:
             # Do not draw a line from a previous encounter's retained counters.
             snapshots = [s for s in snapshots if not s.get('encounterClock', {}).get('startObservedAt') or s['encounterClock']['startObservedAt'] == clock['startObservedAt']]
             buffs = [json.loads(r[0]) for r in db.execute("SELECT payload FROM events WHERE root=? AND kind='buff' AND ts<=? ORDER BY ts,json_extract(payload,'$.transportRecordOrdinal'),CASE WHEN json_extract(payload,'$.kind')='invalidation' THEN 0 ELSE 1 END,stream,ordinal", (root_key, upper))]
-            actions = [(r['kind'], json.loads(r['payload'])) for r in db.execute("SELECT kind,payload FROM events WHERE root=? AND kind IN ('hit','action') AND ts>=? AND ts<=? ORDER BY ts,json_extract(payload,'$.transportRecordOrdinal'),stream,ordinal", (root_key, lower, upper))]
+            actions = [(r['kind'], json.loads(r['payload'])) for r in db.execute("SELECT kind,payload FROM events WHERE root=? AND ((kind='action' AND ts<=?) OR (kind='hit' AND ts>=? AND ts<=?)) ORDER BY ts,json_extract(payload,'$.transportRecordOrdinal'),stream,ordinal", (root_key, upper, lower, upper))]
             settlement = None
             for row in db.execute("SELECT payload FROM events WHERE root=? AND kind='settlement' AND ts>=? AND ts<=? ORDER BY ts,ordinal", (root_key, upper, upper + 5)):
                 detail = json.loads(row[0])
@@ -214,6 +222,7 @@ class WireStore:
                   'serverDuration': final.get('timeCostSeconds') or None,
                   'dps': dps_curves(snapshots, lower, upper, window),
                   'buffs': buff_intervals(buffs, lower, upper), 'actions': action_rows(actions, lower, upper),
+                  'actionTiming': action_timing(actions, lower, upper),
                   'indexing': more, 'skippedRows': errors,
                   'notice': '横轴为本机接收时间，结算时长单独显示。Buff 为观测覆盖：条纹表示起止不完整；未观测到不等于没有。'}
         with self.lock:

@@ -23,3 +23,13 @@ test('property snapshot is not a cast and safe 64-bit skill IDs decode exactly',
   assert.equal(actionEventFromProperty({...row,initial:false}).events[0].actionKind,'cast')
   assert.equal(parse(encode(item('SkillEnd',[9007199254740993n,null,null])),owner,single).events.length,0)
 })
+
+test('queue removal closes the exact instance without turning it into another cast',()=>{
+  const row={ownerHash:owner,syncId:syncId('Skill'),args:Buffer.from(encode([123,null,null,null,Buffer.from('instance'),null,null,null,null,null])).toString('base64'),queue:'skill'}
+  const start=actionEventFromProperty(row).events[0]
+  const end=actionEventFromProperty({...row,operation:'remove',boundaryReason:'queue-removed'}).events[0]
+  assert.equal(end.actionKind,'end');assert.equal(end.endConfirmed,true)
+  assert.equal(start.identifierHash,end.identifierHash);assert.equal(end.rawSkillId,123)
+  const boundary=actionEventFromProperty({...row,operation:'boundary',boundaryReason:'queue-replaced'}).events[0]
+  assert.equal(boundary.actionKind,'boundary');assert.equal(boundary.endConfirmed,false)
+})

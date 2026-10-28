@@ -34,11 +34,22 @@ function actionEventsFromAreaSync(bytes, ownerHash, methodIndex) {
   return {events,rejected}
 }
 function actionEventFromProperty(row) {
+  if (row.operation === 'visibility') {
+    if (row.ownerHash != null && !/^[a-f0-9]{16}$/.test(row.ownerHash)) return {events:[],rejected:[{reason:'Invalid action visibility owner'}]}
+    return {events:[{actionKind:'visibility',sourceActorHash:row.ownerHash || null,rawSkillId:null,
+      endReason:row.boundaryReason,carrier:'sync_event_data',timestampBasis:'packet_capture_completion'}],rejected:[]}
+  }
   const result = actionEventsFromAreaSync(encode([row.syncId, Buffer.from(row.args, 'base64')]), row.ownerHash, 1164740750)
   for (const event of result.events) {
     event.carrier = 'sync_event_data'
     event.initial = !!row.initial
-    if (row.initial && event.actionKind === 'cast') event.actionKind = 'snapshot'
+    event.queue = row.queue || null
+    if (event.actionKind === 'cast' && ['remove','boundary'].includes(row.operation)) {
+      event.actionKind = row.operation === 'remove' ? 'end' : 'boundary'
+      event.endConfirmed = row.operation === 'remove'
+      event.endReason = row.boundaryReason
+      event.evidence = 'server_skill_queue_lifetime; not client animation clock'
+    } else if (row.initial && event.actionKind === 'cast') event.actionKind = 'snapshot'
   }
   return result
 }

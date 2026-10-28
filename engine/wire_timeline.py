@@ -141,5 +141,91 @@ def action_rows(events, start, end):
                        'skillId': data.get('rawSkillId'), 'kind': data.get('actionKind', 'hit') if kind == 'action' else 'hit',
                        'amount': data.get('amount'), 'sequence': data.get('sequence'),
                        'record': data.get('transportRecordOrdinal'), 'subIndex': data.get('syncSubIndex'),
-                       'identifier': data.get('identifierHash'), 'segment': data.get('segment')})
+                       'identifier': data.get('identifierHash'), 'segment': data.get('segment'),
+                       'endReason': data.get('endReason')})
     return result
+
+
+def action_timing(events, start, end):
+    """Pair observed queue instances; gaps are review candidates, never movement.
+
+    Replacements, AOI loss and range ends truncate uncertain spans. A hit does
+    not end a cast. Old captures without end observations stay uncertain.
+    """
+    active, last_end, spans, gaps = {}, {}, [], []
+    epoch = defaultdict(int)
+
+    def close(slot, at, known, reason):
+        row = active.pop(slot, None)
+        if row is None: return
+        known = bool(known and at >= row['at'])
+        if at >= start and row['at'] <= end:
+            a, b = max(start, row['at']), min(end, at)
+            start_known = row['startKnown'] and row['at'] >= start
+            end_known = known and at <= end
+            spans.append({'actor': row['actor'], 'skillId': row['skillId'], 'identifier': row['identifier'],
+                          'start': a-start, 'end': b-start, 'startKnown': start_known, 'endKnown': end_known,
+                          'duration': at-row['at'] if start_known and end_known else None,
+                          'observedSeconds': max(0,b-a), 'endReason': reason,
+                          'target': row['target'], 'record': row['record'], 'epoch': epoch[row['actor']],
+                          'gapBefore': row['gapBefore'], 'phases': row['phases']})
+        if known: last_end[slot] = (at, row['skillId'])
+        else: last_end.pop(slot, None)
+
+    ordered = sorted(enumerate(events), key=lambda item: (ts(item[1][1].get('observedAt')) or 0,
+        item[1][1].get('transportRecordOrdinal') or 0, item[0]))
+    for _, (kind, data) in ordered:
+        if kind != 'action': continue
+        at = ts(data.get('observedAt'))
+        if at is None or at > end: continue
+        actor, action = data.get('sourceActorHash'), data.get('actionKind')
+        if action == 'visibility':
+            affected = {k[0] for k in set(active)|set(last_end)} if not actor else {actor}
+            for slot in list(active):
+                if slot[0] in affected: close(slot, at, False, data.get('endReason') or 'visibility')
+            for slot in list(last_end):
+                if slot[0] in affected: last_end.pop(slot)
+            for who in affected: epoch[who] += 1
+            continue
+        if not actor: continue
+        slot = (actor, data.get('queue') or 'skill')
+        ident, skill = data.get('identifierHash'), data.get('rawSkillId')
+        current = active.get(slot)
+        if action in ('cast', 'snapshot'):
+            if current and ident and ident == current['identifier'] and skill == current['skillId']: continue
+            ambiguous = bool(current and current['skillId'] == skill)
+            if current: close(slot, at, False, 'next-action')
+            gap = None
+            previous = last_end.pop(slot, None)
+            if action == 'cast' and previous and start <= previous[0] <= at:
+                gap = at-previous[0]
+                if gap > 1e-6:
+                    gaps.append({'actor': actor, 'start': previous[0]-start, 'end': at-start,
+                                 'duration': gap, 'previousSkill': previous[1], 'nextSkill': skill})
+            active[slot] = {'actor': actor, 'skillId': skill, 'identifier': ident, 'at': at,
+                            'startKnown': action == 'cast', 'target': data.get('targetActorHash'),
+                            'record': data.get('transportRecordOrdinal'), 'gapBefore': gap,
+                            'ambiguous': ambiguous, 'phases': []}
+        elif action in ('end','boundary') and current:
+            matches = skill == current['skillId'] and (not ident or ident == current['identifier'])
+            if matches:
+                known = action == 'end' and data.get('endConfirmed') is not False and (bool(ident) or not current['ambiguous'])
+                close(slot, at, known, data.get('endReason') or 'server-skill-end')
+        elif action == 'segment' and current and skill == current['skillId'] and at >= start:
+            current['phases'].append({'t': at-start, 'segment': data.get('segment')})
+    for slot in list(active): close(slot, end, False, 'range-end')
+    spans.sort(key=lambda r:(r['start'],r['record'] or 0,r['actor']))
+    counts = defaultdict(int)
+    for row in spans:
+        counts[row['actor']] += 1
+        row['order'] = counts[row['actor']]
+        row['id'] = row['actor'] + ':' + str(row['order'])
+    summaries = {}
+    for actor, count in counts.items():
+        rows = [r for r in spans if r['actor'] == actor]
+        pauses = [r['duration'] for r in gaps if r['actor'] == actor]
+        summaries[actor] = {'actions': count, 'completeActions': sum(r['duration'] is not None for r in rows),
+                            'observedActionSeconds': sum(r['duration'] or 0 for r in rows),
+                            'gapSeconds': sum(pauses), 'gapCount':len(pauses), 'longestGap':max(pauses,default=0)}
+    return {'spans':spans,'gaps':gaps,'actors':summaries,
+            'basis':'同步动作从队列建立到同一条目移除，使用收包时间；不等同客户端动画帧或前后摇。条纹表示起止不完整。空档只表示相邻动作之间未观测到技能占用，需结合机制、走位与命中复查。'}

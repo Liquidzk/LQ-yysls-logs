@@ -4,7 +4,7 @@ import tempfile
 import unittest
 import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from wire_timeline import dps_curves, buff_intervals, action_rows, ts
+from wire_timeline import dps_curves, buff_intervals, action_rows, action_timing, ts
 from wire_store import WireStore
 
 def at(t): return f'2026-01-01T00:00:{t:06.3f}Z'
@@ -13,7 +13,41 @@ def stat(t,a,b=0): return {'observedAt':at(t),'npcNo':1,'actors':[{'idHash':'a',
 def buff(t,kind='apply_candidate',instance='i',source='a',**extra):
     return dict(observedAt=at(t),kind=kind,targetActorHash='b',sourceActorHash=source,buffInstanceHash=instance,buffNo=123,bag='ac_buffs',**extra)
 
+def action(t,kind='cast',actor='a',skill=123,identifier='one',**extra):
+    return ('action',dict(observedAt=at(t),actionKind=kind,sourceActorHash=actor,rawSkillId=skill,identifierHash=identifier,**extra))
+
 class TimelineTests(unittest.TestCase):
+    def test_action_durations_and_gaps_use_matching_ends_not_hits(self):
+        events=[action(1),('hit',dict(observedAt=at(1.2),sourceActorHash='a',rawSkillId=123)),
+                action(2,'end'),action(4,identifier='two'),action(4.5,'end',identifier='two')]
+        r=action_timing(events,START,START+6)
+        self.assertEqual([x['duration'] for x in r['spans']],[1,.5])
+        self.assertEqual(r['gaps'][0]['duration'],2);self.assertEqual(r['spans'][1]['gapBefore'],2)
+    def test_unrelated_and_old_identifier_end_do_not_close_new_action(self):
+        r=action_timing([action(0),action(1,identifier='two'),action(2,'end'),action(3,'end',identifier='two')],START,START+5)
+        self.assertIsNone(r['spans'][0]['duration']);self.assertEqual(r['spans'][1]['duration'],2)
+        self.assertEqual(r['gaps'],[])
+    def test_visibility_breaks_gap_even_when_no_action_is_active(self):
+        r=action_timing([action(0),action(1,'end'),action(2,'visibility'),action(4,identifier='two'),action(5,'end',identifier='two')],START,START+6)
+        self.assertEqual(r['gaps'],[])
+    def test_snapshot_and_range_clipping_do_not_claim_full_duration(self):
+        for events in ([action(0,'snapshot'),action(2,'end')],[action(0),action(2,'end')]):
+            r=action_timing(events,START+1,START+3)
+            self.assertIsNone(r['spans'][0]['duration']);self.assertFalse(r['spans'][0]['startKnown'])
+        r=action_timing([action(1)],START,START+3)
+        self.assertFalse(r['spans'][0]['endKnown']);self.assertEqual(r['gaps'],[])
+    def test_simultaneous_players_and_zero_duration_are_preserved(self):
+        r=action_timing([action(1),action(1,actor='b'),action(1,'end'),action(2,'end',actor='b')],START,START+3)
+        self.assertEqual([x['duration'] for x in r['spans']],[0,1])
+    def test_unconfirmed_queue_boundary_is_not_an_idle_start(self):
+        r=action_timing([action(0),action(1,'boundary',endReason='observed-aoi-leave'),action(4,identifier='two')],START,START+5)
+        self.assertTrue(all(x['duration'] is None for x in r['spans']));self.assertEqual(r['gaps'],[])
+    def test_same_instance_duplicate_start_preserves_original_start(self):
+        r=action_timing([action(1),action(1.1),action(2,'end')],START,START+3)
+        self.assertEqual(len(r['spans']),1);self.assertEqual(r['spans'][0]['duration'],1)
+    def test_wrong_skill_cannot_close_an_instance_even_with_same_identifier(self):
+        r=action_timing([action(1),action(2,'end',skill=999),action(3,'end')],START,START+4)
+        self.assertEqual(r['spans'][0]['duration'],2)
     def test_rates_are_differences_not_cumulative_or_hit_amounts(self):
         d=dps_curves([stat(i,i*100,i*50) for i in range(11)],START,START+10,3)
         self.assertEqual(d['actors']['a'][-1],100)
@@ -70,6 +104,14 @@ class TimelineTests(unittest.TestCase):
             self.assertEqual(timeline['buffs'][0]['coverage'],.75)
             self.assertEqual(timeline['dps']['team'][-1],100)
             self.assertEqual(store.timeline(key),timeline)
+            # An explicit rebuilt stream replaces old action indexing, not hits.
+            (root/'action-events.jsonl').write_text(json.dumps(action(3)[1])+'\n')
+            self.assertEqual(len(store.timeline(key)['actionTiming']['spans']),1)
+            (root/'action-reprocessed.jsonl').write_text('\n'.join(json.dumps(a[1]) for a in [action(3),action(4,'end')])+'\n')
+            rebuilt=store.timeline(key)
+            self.assertEqual(len(rebuilt['actionTiming']['spans']),1)
+            self.assertEqual(rebuilt['actionTiming']['spans'][0]['duration'],1)
+            self.assertEqual(len(rebuilt['actions']),207)
             with self.assertRaises(ValueError):store.timeline(key,'nan')
 
 if __name__=='__main__':unittest.main()

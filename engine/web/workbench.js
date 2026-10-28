@@ -83,7 +83,7 @@ function render() {
   const labels = { hit: '受击／治疗通知', buff: 'Buff 观测', action: '技能动作', boundary: '战斗／目标状态', settlement: '服务器结算' }
   $('events-table').innerHTML = r.events.map((e, i) => {
     const d = e.data
-    const content = e.kind === 'action' ? `${skill(d.rawSkillId)} · ${{cast:'技能开始',end:'技能结束',segment:'技能分段'}[d.actionKind] || d.actionKind}` : e.kind === 'hit' ? `${skill(d.rawSkillId)} · 通知数值 ${num(d.amount)}` : e.kind === 'buff' ? `${buff(d.buffNo)} · ${{ apply_candidate: '添加候选', update: '更新', snapshot: '初始快照', remove_candidate: '移除候选', field_patch: '属性变化' }[d.kind] || d.kind} · 层数 ${d.charge_level ?? d.level ?? '未知'}` : d.kind || '结算详情'
+    const content = e.kind === 'action' ? `${skill(d.rawSkillId)} · ${{cast:'技能开始',end:'同步动作结束',segment:'技能分段',snapshot:'入场动作快照',boundary:'结束边界未确认',visibility:'动作观测范围改变'}[d.actionKind] || d.actionKind}` : e.kind === 'hit' ? `${skill(d.rawSkillId)} · 通知数值 ${num(d.amount)}` : e.kind === 'buff' ? `${buff(d.buffNo)} · ${{ apply_candidate: '添加候选', update: '更新', snapshot: '初始快照', remove_candidate: '移除候选', field_patch: '属性变化' }[d.kind] || d.kind} · 层数 ${d.charge_level ?? d.level ?? '未知'}` : d.kind || '结算详情'
     return `<tr class="event" data-event="${i}"><td>${clock(e.t)}</td><td>${esc(labels[e.kind] || e.kind)}</td><td>${esc(d.sourceActorName || player(d.sourceActorHash))} → ${esc(d.targetActorName || player(d.targetActorHash))}</td><td>${esc(content)}</td></tr>`
   }).join('') || '<tr><td colspan="4">没有匹配的观测记录。</td></tr>'
   document.querySelectorAll('[data-event]').forEach(el => { el.onclick = () => { $('detail-content').textContent = JSON.stringify(r.events[Number(el.dataset.event)], null, 2); $('detail-dialog').showModal() } })
