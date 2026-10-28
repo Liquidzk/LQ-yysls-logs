@@ -12,6 +12,7 @@ const { connectionBoundary } = require('./p1-capture-flags.cjs')
 const { LedgerWriter } = require('./p1-ledger-writer.cjs')
 const { SnapshotPublisher } = require('./p1-snapshot-publisher.cjs')
 const { BattleArchive } = require('./battle-archive.cjs')
+const { BattleTimer } = require('./battle-timer.cjs')
 const { validIdentity, labelEvent } = require('./event-names.cjs')
 const args = process.argv.slice(2), opts = {}
 for (let i = 0; i < args.length; i += 2) opts[args[i].replace(/^--/, '')] = args[i + 1]
@@ -24,6 +25,7 @@ const hash = b => crypto.createHash('sha256').update(b).digest('hex')
 const state = require('./p1-cipher-anchor.cjs').loadCipherAnchor(c)
 const sessionId = hash(Buffer.from(JSON.stringify([c.pid, c.processStartUtc, c.flow, c.serverEncryptedOrigin, c.initialStateSha256]))).slice(0, 24)
 const source = { mode, sessionId }, ledger = new LedgerWriter(), publisher = new SnapshotPublisher()
+const battleTimer = new BattleTimer(sessionId)
 const archive = new BattleArchive(out, source), identities = new Map()
 if (c.identityCacheFile && fs.existsSync(c.identityCacheFile) && fs.statSync(c.identityCacheFile).size <= 2 * 1024 * 1024) {
   try { for (const row of JSON.parse(fs.readFileSync(c.identityCacheFile)).names || []) if (validIdentity(row)) identities.set(row.idHash, { ...row, cached: true }) } catch {}
@@ -37,6 +39,7 @@ const counters = { packets: 0, blocks: 0, statistics: 0, damageEvents: 0, buffEv
 let latest = { schemaVersion: 1, source, observedAt: null, actors: [], sequence: 0, npcNo: null, timeCostSeconds: 0,
   health: { status: 'starting', stale: true, gap: false, session: mode === 'live' ? 'pending' : 'recorded' } }
 let clock = null, buffCoverage = { complete: false, attributionReady: false }, lastStatisticWall = 0
+let lastPacketObservedAt = null
 let stopped = false, failing = false, capture, watcher, tick, pumpTimer, startTimer, lastBindWall = 0, binding = null
 let rawFd = null, rawReadFd = null, rawOffset = 0, rawSize = 0, rawPending = '', nextJob = 0, lastPublish = 0, publishTimer = null
 const pending = new Map()
@@ -45,6 +48,8 @@ fs.writeFileSync(path.join(out, 'manifest.json'), JSON.stringify({ schemaVersion
   limits: ['Only messages delivered to this client are visible.', 'Notification times are packet reception times.',
     'Cumulative counters are not summed with per-hit notifications.', 'Complete teammate casts/private buffs and rDPS remain unverified.'] }, null, 2))
 function publish(force = false) {
+  latest.battleTimer = battleTimer.snapshot()
+  latest.lastPacketObservedAt = lastPacketObservedAt
   // Archive boundaries and counter sequences before UI publication is coalesced.
   try { archive.update(latest, [...identities.values()]) } catch (error) { append('archive-errors.jsonl', { message: error.message }) }
   if (!force && Date.now() - lastPublish < 500) {
@@ -73,6 +78,7 @@ function identify(rows, job) {
   }
 }
 function receive(m, job) {
+  lastPacketObservedAt = job.observedAt
   const stamp = { source, observedAt: job.observedAt, transportRecordOrdinal: job.recordOrdinal }
   identify(m.identityRows || [], job)
   for (const wrapper of m.identities || []) {
@@ -89,6 +95,7 @@ function receive(m, job) {
   for (const e of m.encounterEvents || []) {
     append('encounter-events.jsonl', { ...labelEvent(e, identities), ...stamp })
     if (e.kind === 'boss-battle-state') {
+      battleTimer.boundary(e, job.observedAt)
       if (e.initial) clock = null
       if (e.active && e.previousActive === false && e.stateChanged && !e.initial) {
         clock = { source: { sessionId }, spaceHash: e.spaceHash, startObservedAt: job.observedAt, endObservedAt: null,
@@ -109,8 +116,10 @@ function receive(m, job) {
       }
       const stat = statisticFromBytes(bytes)
       stat.actors = stat.actors.map(a => ({ ...a, ...(identities.get(a.idHash) || {}) }))
+      battleTimer.statistic(stat, job.observedAt)
       if (clock && stat.npcNo) { clock.npcNo ??= stat.npcNo; if (clock.npcNo === stat.npcNo) stat.encounterClock = { ...clock } }
       latest = { schemaVersion: 1, ...stamp, ...stat, sequence: ++counters.statistics,
+        battleTimer: battleTimer.snapshot(), lastPacketObservedAt,
         health: { status: 'healthy', gap: false, stale: false, session: mode === 'live' ? 'valid' : 'recorded' } }
       lastStatisticWall = Date.now(); append('statistics.jsonl', latest); publish()
     } catch (error) { counters.rejectedEvents++; append('rejected-statistics.jsonl', { ...stamp, reason: error.message }) }

@@ -1,4 +1,4 @@
-LQ 燕云 Logs 0.4.1
+LQ 燕云 Logs 0.4.2
 ================
 
 Windows 独立客户端：手动选择燕云进程后采集，实时悬浮统计，保存捕获记录用于复盘；也可单独导入游戏本地 CLv2 日志。
@@ -11,6 +11,7 @@ Windows 独立客户端：手动选择燕云进程后采集，实时悬浮统计
 - 保存完整会话、原始捕获、解码事件和识别出的战斗段；导入已有 capture 目录不改写原始记录。
 - 本地 CLv2：文件/压缩包导入、手动扫描、技能阶段、Buff 覆盖、笔记和多视角合并。
 - Kagerou 衍生悬浮窗：输出、治疗、承伤字段；透明度、字体、置顶及鼠标穿透。
+- 自动开战计时：开战状态优先，累计值变化作为估算；服务器结算时长校准并保留，DPS/HPS 使用同一时长。
 - 名称沿用本机游戏配置生成的映射；找不到映射时保留编号，不猜测名称。
 
 数据含义
@@ -37,7 +38,7 @@ Kagerou 上游源码仍在子模块中便于追溯，发行包仅允许 yanyun/ 
 5. 本机生成的名称映射放入 engine/name_catalog.json。该文件不提交仓库；缺失时以编号显示。
 6. powershell -NoProfile -ExecutionPolicy Bypass -File tools/build-engine.ps1 -Python <Python 路径>
 7. npm run package
-8. 输出 release/v0.4.1/LQ-yysls-logs-win32-x64/燕云Logs.exe；完整目录一起使用。
+8. 输出 release/v0.4.2/LQ-yysls-logs-win32-x64/燕云Logs.exe；完整目录一起使用。
 
 开发运行：先构建解析引擎、准备采集资源，再 npm start。
 可在根目录创建 desktop.local.json 指定 dataDir 和 logRoot；该配置只保存在本机。

@@ -33,6 +33,7 @@ const messages = [
   counters(100),
   { methodIndex: 10, message: { guid: '2', props: [clock(false)] } },
   counters(100, 5),
+  counters(100, 0),
   area(0x2e77db68, [{ stat_type: 2, time_cost: 5, combat_stat: { 'actor-a': { combat_stat: { damage: 100, heal: 0, absorb_dmg: 20 },
     combat_stat_detail: { target: { damage: { '456': 100 }, heal: {}, absorb_dmg: {} } } } } }])
 ]
@@ -66,7 +67,9 @@ const result = spawnSync(process.execPath, [path.join(root, 'runtime/collector/t
 assert.equal(result.status, 0, result.stderr)
 const rows = name => fs.readFileSync(path.join(output, name), 'utf8').trim().split('\n').map(JSON.parse)
 const stats = rows('statistics.jsonl'), hits = rows('damage-events.jsonl'), buffs = rows('buff-events.jsonl'), settlement = rows('settlement-details.jsonl')
-assert.equal(stats.length, 3); assert.equal(stats.at(-1).actors[0].damage, 100); assert.equal(stats.at(-1).actors[0].name, '离线验证角色')
+assert.equal(stats.length, 4); assert.equal(stats.at(-1).actors[0].damage, 100); assert.equal(stats.at(-1).actors[0].name, '离线验证角色')
+assert.equal(stats.at(-1).timeCostSeconds, 0)
+assert.equal(stats.at(-1).battleTimer.phase, 'finalized'); assert.equal(stats.at(-1).battleTimer.durationSeconds, 5)
 assert.equal(hits.length, 1); assert.equal(hits[0].amount, 100); assert.equal(hits[0].rawSkillId, 456)
 assert.equal(hits[0].sourceActorName, '离线验证角色')
 if (cachedOnly) {
