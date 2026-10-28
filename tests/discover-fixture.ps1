@@ -26,6 +26,11 @@ function Get-NetAdapter {
  if($Scenario -eq 'loopback'){throw 'Loopback must not depend on physical adapter discovery'}
  [pscustomobject]@{Status='Up';InterfaceGuid=[Guid]'12345678-1234-1234-1234-123456789abc'}
 }
+function Get-NetUDPEndpoint {
+ param([int]$OwningProcess,[string]$ErrorAction)
+ if($OwningProcess -ne 77){throw 'Wrong UDP process queried'}
+ if($Scenario -eq 'kcp'){[pscustomobject]@{LocalAddress='0.0.0.0';LocalPort=62613}}
+}
 $expected='2026-01-01T00:00:00Z'
 if($Scenario -eq 'stale'){$expected='2025-01-01T00:00:00Z'}
 & $DiscoveryScript -GameProcessId 77 -ExpectedStart $expected

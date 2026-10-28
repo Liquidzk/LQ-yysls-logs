@@ -18,11 +18,13 @@ try {
     loopback=[System.Net.IPAddress]::IsLoopback([System.Net.IPAddress]::Parse($_.RemoteAddress))}
  })
  $loopbackCount=@($flows | Where-Object {$_.loopback}).Count
+ try { $udp=@(Get-NetUDPEndpoint -OwningProcess $game.Id -ErrorAction Stop | Where-Object {$_.LocalAddress -notmatch ':'} | ForEach-Object {@{clientAddress=$_.LocalAddress;clientPort=$_.LocalPort}}) }
+ catch { if($_.CategoryInfo.Category -eq 'ObjectNotFound'){$udp=@()}else{throw} }
  $interfaces=@()
  if($loopbackCount -gt 0){$interfaces+='\Device\NPF_Loopback'}
- if(@($flows | Where-Object {-not $_.loopback}).Count -gt 0){
+ if(@($flows | Where-Object {-not $_.loopback}).Count -gt 0 -or $udp.Count -gt 0){
   $interfaces+=@(Get-NetAdapter -ErrorAction Stop | Where-Object {$_.Status -eq 'Up'} | ForEach-Object {'\Device\NPF_{'+$_.InterfaceGuid.ToString().Trim('{}')+'}'})
  }
- @{status='running';pid=$game.Id;processStartUtc=$game.StartTime.ToUniversalTime().ToString('o');imageBase=('0x'+$module.BaseAddress.ToInt64().ToString('x'));modulePath=$module.FileName;flows=$flows;interfaces=$interfaces;
+ @{status='running';pid=$game.Id;processStartUtc=$game.StartTime.ToUniversalTime().ToString('o');imageBase=('0x'+$module.BaseAddress.ToInt64().ToString('x'));modulePath=$module.FileName;flows=$flows;interfaces=$interfaces;udpEndpoints=$udp;
    connectionCounts=@{established=$established.Count;ipv4=$flows.Count;ipv6=$established.Count-$flows.Count;loopback=$loopbackCount}} | ConvertTo-Json -Depth 5 -Compress
 } catch {@{status='access-error';error=$_.Exception.Message}|ConvertTo-Json -Compress}

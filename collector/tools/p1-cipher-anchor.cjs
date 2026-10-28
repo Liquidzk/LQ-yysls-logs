@@ -17,6 +17,7 @@ function loadCipherAnchor(c){
  if(a.stateSha256!==c.initialStateSha256||a.captureStartTcpSequence!==c.serverEncryptedOrigin)throw Error('Cipher anchor state or TCP origin mismatch');
  if(m?.pid!==c.pid||m.gaps!==0||m.overlapsVerified!==true)throw Error('Cipher anchor process or continuity mismatch');
  for(const key of ['serverAddress','serverPort','clientAddress','clientPort'])if(m.flow?.[key]!==c.flow?.[key])throw Error('Cipher anchor flow mismatch');
+ if(c.transport==='kcp'&&(m.transport!=='kcp'||m.kcpConversation!==c.kcp?.conversation||m.kcpFirstSequence!==c.kcp?.firstSequence||m.remoteEndpoint?.address!==c.kcp?.remoteEndpoint?.address||m.remoteEndpoint?.port!==c.kcp?.remoteEndpoint?.port))throw Error('KCP anchor identity mismatch');
  return state;
 }
 module.exports={loadCipherAnchor};

@@ -1,0 +1,41 @@
+const test = require('node:test'), assert = require('node:assert/strict')
+const { segments, unwrapDatagram, KcpStream, assemble } = require('../collector/tools/kcp-stream.cjs')
+const { captureFilter } = require('../collector/tools/kcp-bootstrap.cjs')
+function frame(sn, data = 'a', cmd = 81, conv = 7) {
+  const body = Buffer.from(data), h = Buffer.alloc(24)
+  h.writeUInt32LE(conv); h[4] = cmd; h.writeUInt32LE(sn, 12); h.writeUInt32LE(body.length, 20)
+  return Buffer.concat([h, body])
+}
+test('KCP preserves ordered bytes across duplicates, reordering and sequence wrap', () => {
+  const chunks = [], stream = new KcpStream({ conversation: 7, firstSequence: 0xfffffffe, onBytes: (b, m) => chunks.push([b.toString(), m.seq]) })
+  for (const sn of [0xffffffff, 0xfffffffe, 0, 0xffffffff]) stream.push(segments(frame(sn, String(sn)))[0])
+  assert.deepEqual(chunks, [['4294967294', 0], ['4294967295', 10], ['0', 20]])
+  assert.equal(stream.pending.size, 0)
+  assert.throws(() => stream.push(segments(frame(0, 'bad'))[0]), /Conflicting/)
+  assert.throws(() => stream.push(segments(frame(1, 'a', 81, 8))[0]), /conversation changed/)
+})
+test('ACKs do not enter cipher stream; gaps stop decoding', () => {
+  const stream = new KcpStream({ conversation: 7, firstSequence: 1, onBytes: () => {}, gapMs: 100 })
+  stream.push(segments(frame(0, '', 82))[0], {}, 0); assert.equal(stream.offset, 0)
+  stream.push(segments(frame(2))[0], {}, 0); assert.throws(() => stream.tick(101), /KCP gap/)
+  assert.throws(() => segments(frame(1).subarray(0, 23)), /Truncated/)
+  assert.throws(() => segments(frame(1, 'bad', 82)), /Invalid/)
+})
+test('UU relay header is tied to exact remote endpoint; direct conversation zero remains valid', () => {
+  const prefix = Buffer.from([0, 0, 0, 0, 192, 0, 2, 1, 0x28, 0xa9])
+  const data = unwrapDatagram(Buffer.concat([prefix, frame(1)]), { address: '192.0.2.1', port: 10409 })
+  assert.equal(data.envelope, 'uu-ipv4'); assert.equal(segments(data.body)[0].sequence, 1)
+  assert.throws(() => unwrapDatagram(Buffer.concat([prefix, frame(1)]), { address: '192.0.2.2', port: 10409 }), /endpoint changed/)
+  assert.equal(unwrapDatagram(frame(1, 'a'.repeat(20), 81, 0)).envelope, 'direct')
+})
+test('initial stream rejects missing or conflicting segments', () => {
+  const p = (sn, data) => ({ time: sn, segments: segments(frame(sn, data)) })
+  assert.equal(assemble([p(2, 'b'), p(1, 'a'), p(2, 'b')]).cipher.toString(), 'ab')
+  assert.throws(() => assemble([p(1, 'a'), p(3, 'c')]), /gap/)
+  assert.throws(() => assemble([p(1, 'a'), p(1, 'b')]), /Conflicting/)
+})
+test('capture filter includes only game UDP ports or exact remote endpoint inside bound proxy', () => {
+  const filter = captureFilter({ address: '192.0.2.1', port: 10409 }, { udpEndpoints: [{ clientPort: 62613 }], flows: [{ loopback: true, serverAddress: '127.0.0.1', serverPort: 1111 }] })
+  assert.match(filter, /dst port 62613/); assert.match(filter, /udp\[12:4\] = 0xc0000201/); assert.match(filter, /udp\[16:2\] = 10409/)
+  assert.throws(() => captureFilter({ address: 'invalid', port: 1 }, {}), /endpoint unavailable/)
+})

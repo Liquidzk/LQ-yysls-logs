@@ -9,6 +9,7 @@ const python = path.join(root, 'runtime/collector/runtime/python/python.exe')
 const b64 = b => Buffer.from(b).toString('base64')
 const currentBuild = process.argv.includes('--current-build')
 const cachedOnly = process.argv.includes('--cached-only')
+const kcpMode = process.argv.includes('--kcp')
 const build = require('../collector/config/client-build.json').builds.find(p => p.id === 'cn-win64r-20261023')
 const currentNames = require('../collector/config/presets/cn-win64r-20261023.json').names
 const bytes = s => ({ svalue: b64(s) }), index = n => ({ sindex: currentBuild ? currentNames.indexOf(mapping.rows.find(r => r.index === n)?.name) : n }), integer = n => ({ ivalue: n })
@@ -49,6 +50,10 @@ const cipherState = { ...state, S: [...state.S] }; let seq = 10000
 const lines = bodies.map((body, i) => {
   const header = Buffer.alloc(4); header.writeUInt32LE(body.length)
   const encrypted = crypt(cipherState, Buffer.concat([header, body])), start = seq; seq += encrypted.length
+  if (kcpMode) {
+    const k = Buffer.alloc(24); k.writeUInt32LE(123); k[4] = 81; k.writeUInt32LE(900 + i, 12); k.writeUInt32LE(encrypted.length, 20)
+    return [i + 1, 1767225600 + i, 0, '192.0.2.1', 2345, '192.0.2.2', 4567, Buffer.concat([k, encrypted]).toString('hex')].join('\t')
+  }
   return [i + 1, 1767225600 + i, 0, '192.0.2.1', 2345, '192.0.2.2', 4567, start, encrypted.length, 'False', 'False', 'False', encrypted.toString('hex')].join('\t')
 })
 const packets = path.join(local, 'synthetic.tsv'); fs.writeFileSync(packets, lines.join('\n') + '\n')
@@ -58,6 +63,7 @@ if (cachedOnly) fs.writeFileSync(identityCacheFile, JSON.stringify({ names: [
   ['actor-a', '离线验证角色'], ['actor-b', '队友示例']
 ].map(([id, name]) => ({ idHash: crypto.createHash('sha256').update(id).digest('hex').slice(0, 16), name, nameSource: 'wire.avatar.base.nickname' })) }))
 fs.writeFileSync(config, JSON.stringify({ pid: 1, processStartUtc: '2026-01-01T00:00:00Z', serverEncryptedOrigin: 10000,
+  ...(kcpMode ? { transport: 'kcp', serverEncryptedOrigin: 0, kcp: { conversation: 123, firstSequence: 900, envelope: 'direct', remoteEndpoint: { address: '192.0.2.1', port: 2345 } } } : {}),
   ...(currentBuild ? { clientBuildSha256: build.imageSha256 } : {}),
   ...(cachedOnly ? { identityCacheFile } : {}),
   initialStateFile: stateFile, initialStateSha256: crypto.createHash('sha256').update(fs.readFileSync(stateFile)).digest('hex'), python,

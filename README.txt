@@ -6,7 +6,7 @@ Windows 独立客户端：手动选择燕云进程后采集，实时悬浮统计
 启动客户端不会绑定游戏或开始抓包。用户需要先启动游戏，再刷新进程列表、选择进程并点击“绑定并开始采集”。PID 与启动时间共同校验；游戏重启后必须重新选择。
 
 功能
-- 网络捕获：只读连接状态初始化、版本校验、被动 TCP 捕获、连续性校验、协议解析。
+- 网络捕获：只读连接状态初始化、版本校验、被动 TCP/KCP 捕获、连续性校验、协议解析；支持已验证的 UU IPv4 UDP 转发格式。
 - 复盘：队伍服务器累计值、技能结算、逐次伤害/治疗通知、Buff 观测、战斗边界，按角色和编号筛选及分页。
 - 保存完整会话、原始捕获、解码事件和识别出的战斗段；导入已有 capture 目录不改写原始记录。
 - 本地 CLv2：文件/压缩包导入、手动扫描、技能阶段、Buff 覆盖、笔记和多视角合并。
@@ -50,6 +50,7 @@ npm test
 node tests/collector-e2e.cjs
 node tests/collector-e2e.cjs --current-build
 node tests/collector-e2e.cjs --current-build --cached-only
+node tests/collector-e2e.cjs --current-build --kcp
 以上端到端验证使用合成消息和实际协议解码器，覆盖旧版、当前版本及仅有缓存名字的会话；完全离线，不选择游戏进程、不打开抓包网卡。
 可用 --validation-data <独立目录> 启动客户端进行隔离验收，不影响原有战斗库。
 

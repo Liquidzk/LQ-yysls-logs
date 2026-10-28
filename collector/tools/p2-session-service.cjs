@@ -24,7 +24,7 @@ function run(exe,args,{input=null,timeout=60000}={}){return new Promise((resolve
 async function discover(){return JSON.parse((await run('powershell.exe',['-NoProfile','-ExecutionPolicy','Bypass','-File',path.join(__dirname,'p2-discover.ps1'),'-GameProcessId',String(binding.pid),'-ExpectedStart',binding.startedAt])).replace(/^\uFEFF/,''));}
 const key=m=>JSON.stringify([m.pid,m.processStartUtc,m.flows]);
 async function bootstrap(m){
- if(closing)throw Error('采集已停止');if(!m.flows?.length)throw Error(m.connectionCounts?.ipv6?'所选进程当前仅有 IPv6 连接，当前解析链尚不支持该连接类型':'所选进程暂未发现已建立的 TCP 连接；请确认所选实例仍在运行');
+ if(closing)throw Error('采集已停止');if(!m.flows?.length&&!m.udpEndpoints?.length)throw Error(m.connectionCounts?.ipv6?'所选进程当前仅有 IPv6 连接，当前解析链尚不支持该连接类型':'所选进程暂未发现可用连接；请确认所选实例仍在运行');
  const profiles=JSON.parse(fs.readFileSync(path.join(root,'config/client-build.json')));
  const imageHash=sha(fs.readFileSync(m.modulePath));
  const profile=require('./client-profile.cjs').selectProfile(profiles,imageHash);
@@ -43,18 +43,23 @@ async function bootstrap(m){
  const interfaces=m.interfaces.filter(i=>available.some(a=>a.toLowerCase()===i.toLowerCase()));
  if(m.flows.some(f=>f.loopback)&&!interfaces.some(i=>i.toLowerCase()==='\\device\\npf_loopback'))throw Error('已识别游戏的本地转发连接，但 Npcap 没有提供回环采集接口');
  if(!interfaces.length)throw Error('没有可用抓包网卡，请检查 Npcap');
- const filter='tcp and ('+m.flows.map(f=>`(src host ${f.serverAddress} and src port ${f.serverPort} and dst host ${f.clientAddress} and dst port ${f.clientPort})`).join(' or ')+')';
+ const filter=m.flows.length?'tcp and ('+m.flows.map(f=>`(src host ${f.serverAddress} and src port ${f.serverPort} and dst host ${f.clientAddress} and dst port ${f.clientPort})`).join(' or ')+')':'tcp and port 0';
  const fields=['frame.number','frame.time_epoch','frame.interface_id','ip.src','tcp.srcport','ip.dst','tcp.dstport','tcp.seq_raw','tcp.len','tcp.flags.syn','tcp.flags.fin','tcp.flags.reset','tcp.payload'];
  const log=path.join(boot,'capture.private.tsv'),stream=fs.createWriteStream(log);
- const capture=spawn(tshark,['-l','-n',...interfaces.flatMap(i=>['-i',i]),'-f',filter,'-a','duration:18','-s','0','-T','fields','-E','separator=/t','-E','occurrence=f',...fields.flatMap(f=>['-e',f])],{windowsHide:true,stdio:['ignore','pipe','pipe']});
+ const capture=spawn(tshark,['-l','-n','-f',filter,...interfaces.flatMap(i=>['-i',i]),'-a','duration:18','-s','0','-T','fields','-E','separator=/t','-E','occurrence=f',...fields.flatMap(f=>['-e',f])],{windowsHide:true,stdio:['ignore','pipe','pipe']});
  children.add(capture);capture.once('close',()=>children.delete(capture));let err='';capture.stdout.pipe(stream);capture.stderr.on('data',b=>{err+=b;});
  const done=new Promise((res,rej)=>{capture.once('error',rej);capture.once('close',code=>stream.end(()=>code===0?res():rej(Error(err.slice(-1000)||'Capture failed'))));});done.catch(()=>{});
  try{await wait(6000);if(fs.existsSync(stopFile))throw Error('用户已关闭程序');await run(python,[path.join(__dirname,'p2-read-state.py'),boot]);await done;}catch(e){capture.kill();await done.catch(()=>{});throw e;}
  const recovery=JSON.parse(fs.readFileSync(path.join(boot,'rpc-state-recovery.json')));if(recovery.status!=='snapshot-ready')throw Error('解码状态尚未准备好：'+recovery.reason);
  const rows=fs.readFileSync(log,'utf8').trim().split(/\r?\n/).filter(Boolean).map(l=>{const a=l.split('\t');return{time:+a[1],iface:+a[2],src:a[3],sport:+a[4],dst:a[5],dport:+a[6],seq:+a[7],len:+a[8],data:Buffer.from(a[12]||'','hex')};}).filter(r=>r.len&&r.data.length===r.len);
  const groups=new Map();for(const r of rows){const k=JSON.stringify([r.iface,r.src,r.sport,r.dst,r.dport]);if(!groups.has(k))groups.set(k,[]);groups.get(k).push(r);}
- let config=null,attempt=0;
- for(const group of groups.values()){
+ let config=null,attempt=0,bridge=null;
+ if(recovery.transportProtocol==='KCP'){
+  status('正在初始化 KCP 游戏连接','已识别 UDP/KCP；正在验证当前角色连接，保持同一条捕获进行交接。');
+  bridge=await require('./kcp-bootstrap.cjs').bootstrapKcp({m,recovery,boot,interfaces,python,tshark,node,run,children,profile,data,closing:()=>closing||fs.existsSync(stopFile)});
+  config=bridge.config;
+ }
+ for(const group of config?[]:groups.values()){
   try{
    group.sort((a,b)=>a.seq-b.seq||a.time-b.time);const first=group[0],origin=first.seq;let end=origin,bytes=Buffer.alloc(0),duplicates=0;
    for(const r of group){if(r.seq>end)throw Error('TCP gap');const overlap=Math.min(end-r.seq,r.data.length);if(overlap&&!bytes.subarray(r.seq-origin,r.seq-origin+overlap).equals(r.data.subarray(0,overlap)))throw Error('Conflicting overlap');duplicates+=overlap;bytes=Buffer.concat([bytes,r.data.subarray(overlap)]);end+=r.data.length-overlap;}
@@ -67,11 +72,15 @@ async function bootstrap(m){
    config={identityCacheFile:path.join(data,'identity-cache.json'),clientBuildSha256:profile.imageSha256,pid:m.pid,processStartUtc:m.processStartUtc,processPath:m.modulePath,flow,captureInterface:interfaces[first.iface],python,tshark,serverEncryptedOrigin:origin,initialStateFile:path.join(align.outDir,r.anchor.stateFile),initialStateSha256:r.anchor.stateSha256,cipherStateKind:'validated-midstream',cipherAnchorReport:report,cipherAnchorReportSha256:sha(fs.readFileSync(report)),gapTimeoutMs:3000,knownAcquisitionGaps:[{kind:'joined-existing-session',note:'Initialization is not a claim that earlier combat was captured.'}]};break;
   }catch(e){fs.appendFileSync(path.join(boot,'alignment-errors.log'),e.message+'\n');}
  }
- if(!config)throw Error('未找到唯一通过协议校验的解码状态，证据已保留');
- const now=await discover();if(now.pid!==m.pid||now.processStartUtc!==m.processStartUtc||!now.flows?.some(f=>['serverAddress','serverPort','clientAddress','clientPort'].every(k=>f[k]===config.flow[k])))throw Error('初始化期间游戏连接改变');
+ if(!config)throw Error(!rows.length?'当前所选 TCP 连接没有收到游戏数据；请确认已进入角色，或当前连接使用了不同传输协议':!attempt?'收到的 TCP 数据不足以校验游戏协议；等待连接产生更多数据':'未找到唯一通过协议校验的解码状态，证据已保留');
+ try{
+ const now=await discover();const sameConnection=config.transport==='kcp'?now.udpEndpoints?.some(e=>config.bindingUdpPorts.includes(e.clientPort)):now.flows?.some(f=>['serverAddress','serverPort','clientAddress','clientPort'].every(k=>f[k]===config.flow[k]));
+ if(now.pid!==m.pid||now.processStartUtc!==m.processStartUtc||!sameConnection)throw Error('初始化期间游戏连接改变');
  const configFile=path.join(session,'session.private.json');fs.writeFileSync(configFile,JSON.stringify(config));const out=path.join(session,'capture');
- const child=spawn(node,[path.join(__dirname,'p1-live-pipeline.cjs'),'--config',configFile,'--out',out,'--duration','43200'],{cwd:root,windowsHide:true,stdio:['ignore','ignore','pipe']});child.stderr.on('data',b=>fs.appendFileSync(path.join(session,'pipeline-errors.log'),b));child.on('error',e=>status('采集启动失败',e.message));
+ const child=spawn(node,[path.join(__dirname,'p1-live-pipeline.cjs'),'--config',configFile,'--out',out,'--duration','43200'],{cwd:root,windowsHide:true,stdio:[bridge?'pipe':'ignore','ignore','pipe']});child.stderr.on('data',b=>fs.appendFileSync(path.join(session,'pipeline-errors.log'),b));child.on('error',e=>{bridge?.stop();status('采集启动失败',e.message)});
+ bridge?.attach(child);
  try{require('os').setPriority(child.pid,require('os').constants.priority.PRIORITY_BELOW_NORMAL);}catch{}current={child,out,key:key(m)};latestPath=path.join(out,'latest.json');status('采集启动中','已验证当前会话解码状态。');
+ }catch(e){bridge?.stop();throw e;}
 }
 (async()=>{
  status('正在绑定所选进程','PID '+binding.pid+'；进入角色后初始化。');

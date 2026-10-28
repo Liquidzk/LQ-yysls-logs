@@ -4,6 +4,10 @@ const discover = scenario => JSON.parse(execFileSync('powershell.exe', ['-NoProf
   path.join(__dirname, 'discover-fixture.ps1'), '-DiscoveryScript', path.join(__dirname, '../collector/tools/p2-discover.ps1'), '-Scenario', scenario],
 { encoding: 'utf8', windowsHide: true, timeout: 10000 }).replace(/^\uFEFF/, ''))
 const options = { skip: process.platform !== 'win32' }
+test('UDP-only game connection exposes only the selected process endpoints', options, () => {
+  const d = discover('kcp'); assert.equal(d.status, 'running'); assert.deepEqual(d.flows, [])
+  assert.deepEqual(d.udpEndpoints, [{ clientAddress: '0.0.0.0', clientPort: 62613 }]); assert.equal(d.interfaces.length, 1)
+})
 test('accelerator loopback connections stay bound to the chosen game and select Npcap loopback', options, () => {
   const d = discover('loopback'); assert.equal(d.status, 'running'); assert.equal(d.pid, 77)
   assert.deepEqual(d.flows.map(f => f.serverPort), [1111, 443]); assert.equal(d.connectionCounts.loopback, 2)

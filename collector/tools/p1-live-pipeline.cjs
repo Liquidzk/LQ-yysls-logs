@@ -147,8 +147,18 @@ const blocks = new BlockStream((body, metadata) => {
   py.stdin.write(JSON.stringify({ id, body: body.toString('base64'), sessionId, recordOrdinal: metadata.recordOrdinal, observedAt: metadata.observedAt }) + '\n')
 })
 const ordered = new OrderedCipher(state, c.serverEncryptedOrigin, { onBytes: (b, m) => blocks.push(b, m), gapMs: c.gapTimeoutMs ?? 3000 })
+const kcp = c.transport === 'kcp' ? new (require('./kcp-stream.cjs').KcpStream)({ ...c.kcp, gapMs: c.gapTimeoutMs ?? 3000,
+  onBytes: (data, metadata) => { if (!data.length) return; ordered.push({ data, ...metadata }); ordered.start(); ordered.drain() } }) : null
 function packet(line) {
   if (!line.trim()) return
+  if (kcp) {
+    const p = require('./kcp-stream.cjs').parseRow(line, c.kcp.remoteEndpoint), f = c.flow
+    if (p.src !== f.serverAddress || p.sport !== f.serverPort || p.dst !== f.clientAddress || p.dport !== f.clientPort) return
+    if (p.envelope !== c.kcp.envelope) throw Error('KCP envelope changed')
+    counters.packets++
+    for (const row of p.segments) kcp.push(row, { frame: p.frame, observedAt: new Date(p.time * 1000).toISOString() })
+    return
+  }
   const a = line.split('\t'); let p
   if (a.length === 8 && mode === 'replay') {
     p = { frame: +a[0], time: a[1], src: a[3], sport: +a[4], seq: +a[5], len: +a[6], hex: a[7] }
@@ -209,7 +219,7 @@ process.on('SIGINT', () => finish()); process.on('SIGTERM', () => finish())
       if (stopped) return
     }
     ordered.start(); ordered.drain()
-    if (ordered.pending.length) throw Error('Replay ends with a TCP gap')
+    if (ordered.pending.length || kcp?.pending.size) throw Error('Replay ends with a transport gap')
     while (pending.size && !stopped) await wait(10)
     finish('replay-complete'); return
   }
@@ -223,10 +233,15 @@ process.on('SIGINT', () => finish()); process.on('SIGTERM', () => finish())
   const f = c.flow, filter = `tcp and host ${f.clientAddress} and host ${f.serverAddress} and port ${f.clientPort} and port ${f.serverPort}`
   const fields = ['frame.number', 'frame.time_epoch', 'frame.interface_id', 'ip.src', 'tcp.srcport', 'ip.dst', 'tcp.dstport', 'tcp.seq_raw', 'tcp.len', 'tcp.flags.syn', 'tcp.flags.fin', 'tcp.flags.reset', 'tcp.payload']
   rawFd = fs.openSync(path.join(out, 'transport.private.tsv'), 'a'); rawReadFd = fs.openSync(path.join(out, 'transport.private.tsv'), 'r')
+  if (kcp) {
+    process.stdin.on('end', () => { if (!stopped) fail('KCP capture handoff closed') })
+    readline.createInterface({ input: process.stdin }).on('line', s => { if (!stopped) try { rawSize += fs.writeSync(rawFd, s + '\n') } catch (e) { fail(e.message) } })
+  } else {
   capture = spawn(c.tshark, ['-l', '-n', '-i', c.captureInterface, '-f', filter, '-s', '0', '-T', 'fields', '-E', 'separator=/t', '-E', 'occurrence=f', ...fields.flatMap(x => ['-e', x])], { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] })
   capture.on('error', e => fail(e.message)); capture.on('exit', () => { if (!stopped) fail('Capture process stopped') })
   capture.stderr.on('data', b => ledger.append(path.join(out, 'capture.stderr.txt'), b.toString()))
   readline.createInterface({ input: capture.stdout }).on('line', s => { if (!stopped) try { rawSize += fs.writeSync(rawFd, s + '\n') } catch (e) { fail(e.message) } })
+  }
   pumpTimer = setInterval(pump, 20)
   startTimer = setTimeout(() => { try { ordered.start() } catch (e) { fail(e.message) } }, 1000)
   const began = Date.now()
@@ -236,6 +251,7 @@ process.on('SIGINT', () => finish()); process.on('SIGTERM', () => finish())
       if (Date.now() - lastBindWall > 8000) throw Error('Process binding verification stale')
       if (ordered.next === null) ordered.start()
       ordered.tick()
+      kcp?.tick()
       latest.health = { status: lastStatisticWall ? 'healthy' : 'waiting', session: 'valid', stale: !lastStatisticWall || Date.now() - lastStatisticWall > 3500,
         gap: !!ordered.gapSince, reason: lastStatisticWall ? 'Waiting for next server counter' : 'Capture active; no server statistics yet' }
       publish()

@@ -53,7 +53,26 @@ try:
   loaded=lookup(reg,'_LOADED');assert loaded and loaded[1]==0x45;G=lookup(loaded[0],'hexm.client.G')
  assert G and G[1]==0x45
  net=lookup(G[0],'net');assert net
+ # The game can switch TCP/KCP between logins. Report the exact Lua setting;
+ # UDP sockets or accelerator traffic alone do not establish the game protocol.
+ protocol=lookup(net[0],'cur_protocol')
+ if protocol and protocol[1]==0x44:
+  protocol_header=read(protocol[0],32,'Exact current transport protocol string header')
+  if protocol_header[8]==4 and 0<protocol_header[17]<=16:
+   protocol_name=read(protocol[0]+32,protocol_header[17],'Exact current transport protocol value').decode('ascii')
+   if protocol_name in ('TCP','KCP'):result['transportProtocol']=protocol_name
  asio=lookup(net[0],'_asio_gate_client');assert asio and asio[1]==0x4c
+ if result.get('transportProtocol')=='KCP':
+  remote_ip=lookup(asio[0],'ip');remote_port=lookup(asio[0],'port')
+  if remote_ip and remote_ip[1]==0x44 and remote_port:
+   ip_header=read(remote_ip[0],32,'Exact current KCP remote IP string header')
+   if ip_header[8]==4 and 0<ip_header[17]<=64:
+    ip_text=read(remote_ip[0]+32,ip_header[17],'Exact current KCP remote IP value').decode('ascii')
+    # This engine's integer TValue uses tag 3 (confirmed against relay header).
+    port_number=remote_port[0] if remote_port[1]==3 else 0
+    import ipaddress
+    if ipaddress.ip_address(ip_text).version==4 and int(port_number)==port_number and 0<port_number<65536:
+     result['remoteEndpoint']={'address':ip_text,'port':int(port_number)}
  obj=read(asio[0],80,'Asio engineobject rpc_handler type19 and native pointer');assert obj[8]==12 and u64(obj,48)>=16 and struct.unpack_from('<H',obj,64)[0]==19
  handler=read(u64(obj,72),32,'rpc_handler implementation pointer at+8')
  impl=read(u64(handler,8),144,'Native connection implementation, transform at+0x50')
