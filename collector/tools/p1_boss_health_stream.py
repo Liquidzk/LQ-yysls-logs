@@ -38,7 +38,17 @@ class BossHealthStream(BuffStream):
     self.pending.append({'kind':'npc-health', 'actorHash':key, 'npcTemplateNo':old.get('npcTemplateNo'),
                          'available':False, 'reason':reason})
  def consume(self, msg):
-  self.pending=[]; self._ids(msg); changed=set(); patches={}
+  self.pending=[]
+  if msg.DESCRIPTOR.name=='SpaceData':
+   # IGateClient.set_space_data carries the engine's complete space dictionary
+   # on entry, before AOI entity creation. Its key/value form is only a patch.
+   # The separately created entity named SpaceData is NOT this boundary: in
+   # party dungeons it can arrive after the Boss's initial HP snapshot.
+   if msg.HasField('dict'):
+    self.invalidate('space-data-reset')
+    self.guids.clear();self.classes.clear()
+   return list(self.pending)
+  self._ids(msg); changed=set(); patches={}
   def walk(m, path=(), actor=None, initial=False):
    fields=m.DESCRIPTOR.fields_by_name
    if 'guid' in fields and m.HasField('guid'):actor=self.guids.get(m.guid,actor)
@@ -46,8 +56,6 @@ class BossHealthStream(BuffStream):
     initial=True
     if self.classes.get(actor)=='Npc':
      self.hp[actor]={'salt':0};changed.add(actor)
-    elif m.name==b'SpaceData':
-     self.invalidate('space-snapshot')
     elif actor in self.hp:self.invalidate('entity-class-changed',actor)
    if m.DESCRIPTOR.name=='PropItem':
     if m.HasField('eid') and m.eid:actor=hashed(m.eid)

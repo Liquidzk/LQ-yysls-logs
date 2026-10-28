@@ -11,7 +11,7 @@ test('Boss catalog excludes adds and preserves exact dual-body identities', () =
   assert.equal(rows[0].currentHp,500);assert.equal(rows[1].maxHp,2000)
   h.consume({ ...event(22800007,'soul'), reason:'observed_aoi_leave', available:false },'later')
   assert.equal(h.snapshot().rows[1].currentHp,null)
-  h.consume({...event(22800004,'body'),reason:'space-snapshot'},'later');assert.equal(h.snapshot().rows.length,0)
+  h.consume({...event(22800004,'body'),reason:'space-data-reset'},'later');assert.equal(h.snapshot().rows.length,0)
 })
 test('Boss freshness uses connection pulse, independently of damage statistics', () => {
   const now=Date.parse('2026-01-01T00:00:10Z'), h=new BossHealth()

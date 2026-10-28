@@ -7,7 +7,7 @@ class BossHealth {
     const id = String(event.npcTemplateNo), meta = this.config.entities[id]
     if (!event.actorHash) return false
     if (!meta) return this.entities.delete(event.actorHash)
-    if (event.reason?.startsWith('observed_aoi_') || ['guid_rebound', 'space-snapshot', 'entity-class-changed'].includes(event.reason)) {
+    if (event.reason?.startsWith('observed_aoi_') || ['guid_rebound', 'space-data-reset', 'space-snapshot', 'entity-class-changed'].includes(event.reason)) {
       this.entities.delete(event.actorHash)
     } else {
       this.entities.set(event.actorHash, { actorHash: event.actorHash, npcTemplateNo: event.npcTemplateNo,

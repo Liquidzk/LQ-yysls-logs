@@ -52,6 +52,14 @@ messages.push({ methodIndex:10, message:{guid:'1',props:[actionQueue(11)]} })
 if (currentBuild) {
   const salt = 0x76543210fedcba98n
   const hp = n => { const b = Buffer.alloc(8); b.writeDoubleLE(n); return integer(BigInt.asIntN(64,b.readBigUInt64LE() ^ salt).toString()) }
+  // A Boss from the preceding world must leave on the engine space snapshot,
+  // even when no AoiGuid.leave is sent during the transfer.
+  messages.push({methodIndex:12,message:{name:b64('Npc'),id:b64('previous-world-boss'),guid:'9',props:{props:[
+    prop(field('No'),integer(92000001)),{name:index(field('attr')),dict:{item:[
+      prop(field('salt'),integer(salt.toString())),prop(field('HP'),hp(300)),prop(field('HP_MAX'),hp(400))
+    ]}}
+  ]}}})
+  messages.push({methodIndex:14,message:{dict:{}}})
   for (const [id, guid, no, current, maximum] of [['body','10',22800004,500,1000], ['soul','11',22800007,800,2000]]) {
     messages.push({ methodIndex:12, message:{ name:b64('Npc'), id:b64(id), guid, props:{props:[
       prop(field('No'),integer(no)), {name:index(field('attr')),dict:{item:[
@@ -59,6 +67,10 @@ if (currentBuild) {
       ]}}
     ]}}})
   }
+  // Observed party entry order: Boss creation precedes the SpaceData entity.
+  // This entity snapshot must not delete either body or its independent max.
+  messages.push({methodIndex:12,message:{name:b64('SpaceData'),id:b64('new-space'),guid:'12'}})
+  messages.push({methodIndex:14,message:{key:{value:bytes('preload_entities')},value:{value:integer(1)}}})
   messages.push({methodIndex:10,message:{guid:'10',props:[{path:[index(field('attr'))],name:index(field('HP')),value:hp(0)}]}})
 }
 if (cachedOnly) for (const packet of messages) {
@@ -125,7 +137,9 @@ if (currentBuild) {
   const hp=JSON.parse(fs.readFileSync(path.join(output,'latest.json'))).bossHealth.rows
   assert.equal(hp.length,2); assert.equal(hp[0].role,'body'); assert.equal(hp[0].currentHp,0)
   assert.equal(hp[0].maxHp,1000); assert.equal(hp[1].currentHp,800); assert.equal(hp[1].maxHp,2000)
-  assert.equal(rows('encounter-events.jsonl').filter(e=>e.kind==='npc-health' && e.available).length,3)
+  const healthEvents=rows('encounter-events.jsonl').filter(e=>e.kind==='npc-health')
+  assert.equal(healthEvents.filter(e=>e.available).length,4)
+  assert.equal(healthEvents.filter(e=>e.reason==='space-data-reset').length,1)
 }
 fs.writeFileSync(path.join(root, '.local/last-e2e.json'), JSON.stringify({ path: output, verified: true, synthetic: true }))
 console.log(JSON.stringify({ passed: true, synthetic: true, output, statistics: stats.length, hits: hits.length, buffs: buffs.length, settlements: settlement.length }))
