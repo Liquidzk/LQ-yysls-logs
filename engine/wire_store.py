@@ -5,7 +5,7 @@ import math
 from pathlib import Path
 import sqlite3
 import threading
-from datetime import datetime
+from datetime import datetime, timezone
 
 
 def read_json(path, default=None):
@@ -27,7 +27,7 @@ def timestamp(value):
 class WireStore:
     streams = {'statistics.jsonl': 'counter', 'damage-events.jsonl': 'hit', 'buff-events.jsonl': 'buff',
                'encounter-events.jsonl': 'boundary', 'identity-events.jsonl': 'identity',
-               'settlement-details.jsonl': 'settlement'}
+               'settlement-details.jsonl': 'settlement', 'action-events.jsonl': 'action', 'buff-visibility.jsonl': 'buff'}
 
     def __init__(self, data, capture_root):
         self.data, self.root = Path(data), Path(capture_root).resolve()
@@ -36,6 +36,7 @@ class WireStore:
         self.registry = self.data / 'capture-sources.json'
         self.dbpath = self.data / 'capture-index.sqlite3'
         self.lock = threading.RLock()
+        self.timeline_cache = {}
         with self.connect() as db:
             db.executescript('''CREATE TABLE IF NOT EXISTS streams(root TEXT,file TEXT,offset INTEGER,ordinal INTEGER,PRIMARY KEY(root,file));
             CREATE TABLE IF NOT EXISTS events(root TEXT,stream TEXT,ordinal INTEGER,ts REAL,kind TEXT,actor TEXT,target TEXT,skill TEXT,buff TEXT,payload TEXT,PRIMARY KEY(root,stream,ordinal));
@@ -106,8 +107,10 @@ class WireStore:
             b, last = e['battle'], e['latest']
             clock = (b or {}).get('clock', {})
             npc = (b or {}).get('statistics', {}).get('npcNo') or last.get('npcNo')
-            result.append({'key': e['key'], 'kind': 'battle' if b else 'session',
+            templates = {n.get('npcTemplateNo') for n in (clock.get('identityContext') or {}).get('npcs', []) if n.get('npcTemplateNo')}
+            result.append({'key': e['key'], 'parentKey': self.key(e['root']), 'kind': 'battle' if b else 'session',
                            'title': ('战斗' if b else '完整采集会话') + ' · ' + str(npc or '等待目标'), 'npcNo': npc,
+                           'npcTemplateNo': next(iter(templates)) if len(templates) == 1 else None,
                            'startedAt': clock.get('startObservedAt') or (read_json(e['root'] / 'manifest.json', {}) or {}).get('startedAt') or last.get('observedAt'),
                            'endedAt': clock.get('endObservedAt'), 'mode': last.get('source', {}).get('mode', 'unknown'),
                            'status': (b or {}).get('status') or last.get('health', {}).get('status', 'unknown')})
@@ -165,6 +168,59 @@ class WireStore:
                 db.execute('INSERT OR REPLACE INTO streams VALUES(?,?,?,?)', (root_key, file, offset, ordinal))
         return more, errors
 
+    def timeline(self, key, window=3):
+        from wire_timeline import dps_curves, buff_intervals, action_rows
+        entry = self.find(key)
+        if not entry['battle']:
+            return {'requiresBattle': True, 'key': key, 'battles': [x for x in self.list() if x['kind'] == 'battle' and x['parentKey'] == key]}
+        window = float(window)
+        if not math.isfinite(window) or window < .5 or window > 30: raise ValueError('DPS 窗口须为 0.5—30 秒')
+        root, battle = entry['root'], entry['battle']
+        more, errors = self.sync(root)
+        cache_key = (key, window)
+        stamps = tuple((f, (root / f).stat().st_size) for f in self.streams if (root / f).exists())
+        signature = (stamps, json.dumps(battle, sort_keys=True), more)
+        cached = self.timeline_cache.get(cache_key)
+        if cached and cached[0] == signature: return cached[1]
+        clock = battle.get('clock', {})
+        lower = timestamp(clock.get('startObservedAt'))
+        if lower is None: raise ValueError('这份记录没有有效的开战时间，请选择其他战斗')
+        upper = timestamp(clock.get('endObservedAt'))
+        root_key = self.key(root)
+        with self.connect() as db:
+            if upper is None:
+                upper = db.execute('SELECT max(ts) FROM events WHERE root=?', (root_key,)).fetchone()[0] or lower
+            upper = max(lower, upper)
+            snapshots = [json.loads(r[0]) for r in db.execute("SELECT payload FROM events WHERE root=? AND kind='counter' AND ts>=? AND ts<=? ORDER BY ts,ordinal", (root_key, lower - 5, upper))]
+            # Do not draw a line from a previous encounter's retained counters.
+            snapshots = [s for s in snapshots if not s.get('encounterClock', {}).get('startObservedAt') or s['encounterClock']['startObservedAt'] == clock['startObservedAt']]
+            buffs = [json.loads(r[0]) for r in db.execute("SELECT payload FROM events WHERE root=? AND kind='buff' AND ts<=? ORDER BY ts,json_extract(payload,'$.transportRecordOrdinal'),CASE WHEN json_extract(payload,'$.kind')='invalidation' THEN 0 ELSE 1 END,stream,ordinal", (root_key, upper))]
+            actions = [(r['kind'], json.loads(r['payload'])) for r in db.execute("SELECT kind,payload FROM events WHERE root=? AND kind IN ('hit','action') AND ts>=? AND ts<=? ORDER BY ts,json_extract(payload,'$.transportRecordOrdinal'),stream,ordinal", (root_key, lower, upper))]
+            settlement = None
+            for row in db.execute("SELECT payload FROM events WHERE root=? AND kind='settlement' AND ts>=? AND ts<=? ORDER BY ts,ordinal", (root_key, upper, upper + 5)):
+                detail = json.loads(row[0])
+                if (detail.get('encounterContext') or {}).get('startObservedAt') == clock['startObservedAt'] and detail.get('timeCostSeconds', 0) > 0:
+                    settlement = detail; break
+        final = battle.get('statistics', {}) or {}
+        if settlement:
+            final = {'observedAt': settlement['observedAt'], 'encounterClock': clock,
+                     'timeCostSeconds': settlement['timeCostSeconds'], 'npcNo': final.get('npcNo'),
+                     'actors': [{'idHash': a['actorHash'], 'damage': a['totals']['damage']} for a in settlement['actors']]}
+        if final.get('encounterClock', {}).get('startObservedAt') == clock['startObservedAt'] and timestamp(final.get('observedAt')) is not None and timestamp(final['observedAt']) > upper:
+            # The final value is an endpoint; never extend the reception axis.
+            final = dict(final, observedAt=datetime.fromtimestamp(upper, tz=timezone.utc).isoformat())
+            snapshots.append(final)
+        result = {'key': key, 'requiresBattle': False, 'duration': upper - lower,
+                  'serverDuration': final.get('timeCostSeconds') or None,
+                  'dps': dps_curves(snapshots, lower, upper, window),
+                  'buffs': buff_intervals(buffs, lower, upper), 'actions': action_rows(actions, lower, upper),
+                  'indexing': more, 'skippedRows': errors,
+                  'notice': '横轴为本机接收时间，结算时长单独显示。Buff 为观测覆盖：条纹表示起止不完整；未观测到不等于没有。'}
+        with self.lock:
+            if len(self.timeline_cache) >= 8: self.timeline_cache.clear()
+            self.timeline_cache[cache_key] = (signature, result)
+        return result
+
     def report(self, key, actor='', kind='all', offset=0, search=''):
         entry = self.find(key); root = entry['root']; more, errors = self.sync(root)
         root_key, battle = self.key(root), entry['battle']
@@ -215,6 +271,13 @@ class WireStore:
                     continue
                 details.append(item)
                 break
+            if battle and details and details[0].get('timeCostSeconds', 0) > 0:
+                # Idle snapshots may lose a party member after the fight. The
+                # anchored settlement remains the complete final roster/totals.
+                latest = dict(latest, timeCostSeconds=details[0]['timeCostSeconds'])
+                actors = [{'idHash': a['actorHash'], 'name': identities.get(a['actorHash']) or '玩家 · ' + a['actorHash'][-6:],
+                           'damage': a['totals']['damage'], 'heal': a['totals']['heal'], 'absorbDmg': a['totals']['absorb_dmg']}
+                          for a in details[0].get('actors', []) if a.get('actorHash') and a.get('totals')]
             if kind != 'all':
                 if kind not in set(self.streams.values()):
                     raise ValueError('未知事件类别')

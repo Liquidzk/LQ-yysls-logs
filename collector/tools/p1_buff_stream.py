@@ -39,10 +39,13 @@ class BuffStream:
   self.counts['invalidation:'+reason]+=1
   self.invalidations.append({'reason':reason,'actorHash':actor})
   self.invalidations=self.invalidations[-100:]
+  if hasattr(self,'pending_invalidations'):
+   self.pending_invalidations.append({'kind':'invalidation','targetActorHash':actor,'reason':reason,'sourceActorHash':None})
   if clear:
    for k in list(self.states):
     if actor is None or k[0]==actor:self.states.pop(k)
  def consume(self,msg):
+  self.pending_invalidations=[]
   self._ids(msg);rows=[];groups=[]
   def walk(m,path,actor,initial,guid=None):
    fields=m.DESCRIPTOR.fields_by_name
@@ -92,6 +95,6 @@ class BuffStream:
    if op==4:self.states.pop(k,None)
    elif kind!='unknown_operation':self.states[k]=s
   if out:self.revision+=1
-  return out
+  return self.pending_invalidations+out
  def coverage(self):
   return {'schemaVersion':1,'preset':self.preset.id,'events':sum(a['events'] for a in self.actors.values()),'kinds':dict(self.counts),'actors':list(self.actors.values()),'recentInvalidations':self.invalidations,'attributionReady':False,'complete':False,'timingValidated':False,'sourceOwnershipValidated':False,'snapshotValidated':False,'privateBuffCoverageComplete':False,'aoiClosureValidated':False,'lifecycleOpcodesValidated':False,'limits':['Public visibility does not prove complete teammate private state.','Removal/clear and AOI closure semantics remain unvalidated; absence is never zero gain.','Provider changes are observations; historical stack ownership remains unknown.','Nominal expiry is not authoritative execution time; never expire for attribution by receive clock.']}

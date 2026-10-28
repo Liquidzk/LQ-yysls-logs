@@ -34,6 +34,17 @@ class WireStoreTests(unittest.TestCase):
         self.assertEqual(r['counts']['hit'], 1)
         self.assertEqual(r['events'][0]['data']['amount'], 40)
 
+    def test_anchored_final_settlement_keeps_members_missing_from_idle_counters(self):
+        clock={'startObservedAt':'2026-01-01T00:00:05Z','endObservedAt':'2026-01-01T00:00:10Z'}
+        folder=self.root/'battles'/'settled';folder.mkdir(parents=True)
+        (folder/'battle.json').write_text(json.dumps({'clock':clock,'statistics':dict(self.stat,encounterClock=clock)}))
+        self.append('settlement-details.jsonl',{'observedAt':'2026-01-01T00:00:10.100Z','encounterContext':clock,'timeCostSeconds':5.1,
+            'actors':[{'actorHash':a,'totals':{'damage':n,'heal':0,'absorb_dmg':0},'targets':[]} for a,n in [('a',100),('b',50)]]})
+        report=self.store.report(self.store.key(folder))
+        self.assertEqual([a['idHash'] for a in report['actors']],['a','b'])
+        self.assertEqual(report['duration'],5.1)
+        self.assertEqual(self.store.timeline(self.store.key(folder))['serverDuration'],5.1)
+
     def test_partial_line_waits_without_duplicating_prior_events(self):
         file = self.root / 'buff-events.jsonl'
         file.write_text('{"observedAt":"2026-01-01T00:00:05Z",')

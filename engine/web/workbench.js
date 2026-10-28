@@ -11,7 +11,7 @@ async function api(url) { const response = await fetch(url); const data = await 
 function player(id) { return state.report?.identities[id] || state.report?.actors.find(a => a.idHash === id)?.name || (id ? '实体 · ' + id.slice(-6) : '未知') }
 function skill(id) { return id == null || id === '' ? '技能未记录' : state.names.skills?.[String(id)] || '技能 #' + id }
 function buff(id) { return id == null ? 'Buff 未记录' : state.names.buffs?.[String(id)] || 'Buff #' + id }
-function title(s) { return s?.npcNo && state.names.npcs?.[String(s.npcNo)] ? (s.kind === 'battle' ? '战斗 · ' : '采集会话 · ') + state.names.npcs[String(s.npcNo)] : s?.title || '当前采集会话' }
+function title(s) { return s?.npcTemplateNo && state.names.npcs?.[String(s.npcTemplateNo)] ? (s.kind === 'battle' ? '战斗 · ' : '采集会话 · ') + state.names.npcs[String(s.npcTemplateNo)] : s?.title || '当前采集会话' }
 function mode(value) { state.serial++; state.mode = value; $('binding-panel').hidden = value !== 'live'; document.querySelectorAll('[data-mode]').forEach(b => b.classList.toggle('selected', b.dataset.mode === value)) }
 document.querySelectorAll('[data-mode]').forEach(b => { b.onclick = () => { mode(b.dataset.mode); refresh().catch(e => toast(e.message)) } })
 async function processes() {
@@ -53,6 +53,8 @@ async function load() {
 }
 function render() {
   const r = state.report; if (!r) return
+  document.querySelector('.chart-panel').hidden = state.tab === 'timeline'
+  if (state.tab === 'timeline') window.WireTimeline.show(r, state.names, key => { state.key = key; mode('archive'); load().catch(e => toast(e.message)); list().catch(() => {}) }).catch(e => toast(e.message))
   $('empty').hidden = true; $('review').hidden = false
   $('source-label').textContent = state.mode === 'live' ? (state.running ? '当前采集 · 已观测数据' : '采集已停止 · 末次记录') : '已保存的网络观测'
   $('fight-title').textContent = state.sessions.find(s => s.key === r.key)?.title || '当前采集会话'
@@ -78,10 +80,10 @@ function render() {
   const actors = { ...r.identities, ...Object.fromEntries(r.actors.map(a => [a.idHash, a.name])) }
   $('actor-filter').innerHTML = '<option value="">全部角色</option>' + Object.entries(actors).map(([id, name]) => `<option value="${esc(id)}">${esc(name)}</option>`).join('')
   $('actor-filter').value = state.actor
-  const labels = { hit: '受击／治疗通知', buff: 'Buff 观测', boundary: '战斗／目标状态', settlement: '服务器结算' }
+  const labels = { hit: '受击／治疗通知', buff: 'Buff 观测', action: '技能动作', boundary: '战斗／目标状态', settlement: '服务器结算' }
   $('events-table').innerHTML = r.events.map((e, i) => {
     const d = e.data
-    const content = e.kind === 'hit' ? `${skill(d.rawSkillId)} · 通知数值 ${num(d.amount)}` : e.kind === 'buff' ? `${buff(d.buffNo)} · ${{ apply_candidate: '添加候选', update: '更新', snapshot: '初始快照', remove_candidate: '移除候选', field_patch: '属性变化' }[d.kind] || d.kind} · 层数 ${d.charge_level ?? d.level ?? '未知'}` : d.kind || '结算详情'
+    const content = e.kind === 'action' ? `${skill(d.rawSkillId)} · ${{cast:'技能开始',end:'技能结束',segment:'技能分段'}[d.actionKind] || d.actionKind}` : e.kind === 'hit' ? `${skill(d.rawSkillId)} · 通知数值 ${num(d.amount)}` : e.kind === 'buff' ? `${buff(d.buffNo)} · ${{ apply_candidate: '添加候选', update: '更新', snapshot: '初始快照', remove_candidate: '移除候选', field_patch: '属性变化' }[d.kind] || d.kind} · 层数 ${d.charge_level ?? d.level ?? '未知'}` : d.kind || '结算详情'
     return `<tr class="event" data-event="${i}"><td>${clock(e.t)}</td><td>${esc(labels[e.kind] || e.kind)}</td><td>${esc(d.sourceActorName || player(d.sourceActorHash))} → ${esc(d.targetActorName || player(d.targetActorHash))}</td><td>${esc(content)}</td></tr>`
   }).join('') || '<tr><td colspan="4">没有匹配的观测记录。</td></tr>'
   document.querySelectorAll('[data-event]').forEach(el => { el.onclick = () => { $('detail-content').textContent = JSON.stringify(r.events[Number(el.dataset.event)], null, 2); $('detail-dialog').showModal() } })
@@ -94,7 +96,7 @@ function render() {
 function selectTab(tab, keepFilter = false) {
   state.tab = tab
   document.querySelectorAll('[data-tab]').forEach(b => b.classList.toggle('selected', b.dataset.tab === tab))
-  for (const name of ['team', 'skills', 'events']) $(name + '-panel').hidden = name !== (tab === 'buffs' ? 'events' : tab)
+  for (const name of ['team', 'skills', 'events', 'timeline']) $(name + '-panel').hidden = name !== (tab === 'buffs' ? 'events' : tab)
   if (!keepFilter) { state.kind = tab === 'buffs' ? 'buff' : 'all'; state.search = ''; state.actor = ''; $('event-search').value = ''; $('kind-filter').value = state.kind; state.offset = 0 }
   load().catch(e => toast(e.message))
 }
@@ -117,7 +119,25 @@ async function refresh() {
     else if (state.mode === 'live') { state.serial++; state.key = null; state.report = null; $('empty').hidden = false; $('review').hidden = true }
   } finally { state.busy = false }
 }
-api('/api/names').then(names => { state.names = names }).catch(() => {})
+api('/api/names').then(names => { state.names = names; render() }).catch(() => {})
 list().catch(e => toast(e.message)); refresh().catch(e => toast(e.message))
 setInterval(() => refresh().catch(() => { $('status').textContent = '解析服务连接中断' }), 2000)
 setInterval(() => list().catch(() => {}), 10000)
+
+let nameCatalog
+function renderNames() {
+  if (!nameCatalog) return
+  const kind = $('names-kind').value, query = $('names-search').value.trim().toLowerCase(), filter = $('names-status').value
+  const mapped = state.names[kind] || {}, unresolved = nameCatalog.unresolved?.[kind] || {}, evidence = nameCatalog.provenance?.[kind] || {}
+  const ids = [...new Set([...Object.keys(mapped), ...Object.keys(unresolved)])].filter(id => {
+    const status = mapped[id] ? 'mapped' : unresolved[id]?.status
+    return (filter === 'all' || status === filter) && `${id} ${mapped[id] || ''}`.toLowerCase().includes(query)
+  }).sort((a,b) => Number(a) - Number(b))
+  $('names-rows').innerHTML = ids.slice(0,200).map(id => `<tr><td>${esc(id)}</td><td>${esc(mapped[id] || unresolved[id]?.reason || '待恢复')}</td><td>${esc(evidence[id] ? `${evidence[id].label} · ${evidence[id].table}.${evidence[id].field}${evidence[id].via ? ' → ' + evidence[id].via : ''}` : unresolved[id]?.status || '')}</td></tr>`).join('') || '<tr><td colspan="3">没有匹配的条目。</td></tr>'
+  $('names-summary').textContent = `当前类别已映射 ${Object.keys(mapped).length.toLocaleString()} 条。保留原编号；内部未命名条目与尚未恢复的文本分别列出。`
+  $('names-count').textContent = `匹配 ${ids.length.toLocaleString()} 条，显示前 ${Math.min(ids.length,200)} 条；输入名称或编号缩小范围。`
+}
+$('show-names').onclick = async () => { $('names-dialog').showModal(); $('names-summary').textContent = '正在读取名称来源…'; try { nameCatalog ||= await api('/api/name-catalog'); renderNames() } catch(e) { $('names-summary').textContent = e.message } }
+$('close-names').onclick = () => $('names-dialog').close()
+for (const id of ['names-kind','names-status']) $(id).onchange = renderNames
+$('names-search').oninput = renderNames

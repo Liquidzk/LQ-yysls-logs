@@ -16,8 +16,8 @@ class DesktopHandler(Handler):
     def do_GET(self):
         path=unquote(urlparse(self.path).path)
         if not self.valid_host():self.send({'error':'仅限本机访问'},403);return
-        if path in ('/', '/capture', '/workbench.js', '/workbench.css'):
-            name={'/':'workbench.html','/capture':'workbench.html','/workbench.js':'workbench.js','/workbench.css':'workbench.css'}[path]
+        if path in ('/', '/capture', '/workbench.js', '/workbench.css', '/timeline.js', '/timeline.css'):
+            name={'/':'workbench.html','/capture':'workbench.html','/workbench.js':'workbench.js','/workbench.css':'workbench.css','/timeline.js':'timeline.js','/timeline.css':'timeline.css'}[path]
             from combat import ROOT
             file=ROOT/'web'/name
             self.send(file.read_bytes(),ctype=mimetypes.guess_type(str(file))[0]+'; charset=utf-8');return
@@ -28,6 +28,8 @@ class DesktopHandler(Handler):
                 q=parse_qs(urlparse(self.path).query)
                 if path=='/api/capture/status':self.send(self.server.wire.status());return
                 if path=='/api/capture/sessions':self.send(self.server.wire.list());return
+                if path=='/api/capture/timeline':
+                    self.send(self.server.wire.timeline(q.get('key',[''])[0],q.get('window',[3])[0]));return
                 if path=='/api/capture/report':
                     self.send(self.server.wire.report(q.get('key',[''])[0],q.get('actor',[''])[0],q.get('kind',['all'])[0],q.get('offset',[0])[0],q.get('search',[''])[0]));return
             except (ValueError,OSError) as exc:self.send({'error':str(exc)},400);return

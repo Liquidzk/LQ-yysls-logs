@@ -3,7 +3,8 @@
 const fs = require('node:fs'), path = require('node:path'), assert = require('node:assert/strict'), crypto = require('node:crypto')
 const { spawnSync } = require('node:child_process'), { encode } = require('@msgpack/msgpack')
 const { init, crypt } = require('../collector/tools/rc4-state-offline.cjs')
-const root = path.resolve(__dirname, '..'), local = path.join(root, '.local/collector-e2e', String(Date.now()))
+const { syncId } = require('../collector/tools/action-events.cjs')
+const root = path.resolve(__dirname, '..'), local = path.join(root, '.local/collector-e2e', Date.now() + '-' + crypto.randomUUID())
 fs.mkdirSync(local, { recursive: true })
 const python = path.join(root, 'runtime/collector/runtime/python/python.exe')
 const b64 = b => Buffer.from(b).toString('base64')
@@ -42,6 +43,12 @@ const messages = [
   counters(100, 5),
   counters(100, 0)
 ]
+// The skill start carrier is a property queue, not a damage notification.
+const actionQueue = (operation) => ({ name:index(field('sync_event_data')), dict:{item:[{name:bytes('skill'),oper:operation,dict:{item:[
+  prop(field('event'),integer(syncId('Skill'))),prop(field('args'),bytes(encode([456n,[0,0,0],0,null,Buffer.from('cast-id'),Buffer.from('target'),null,null,false,0],{useBigInt64:true})))
+]}}]} })
+messages[3].message.props.props.push(actionQueue(49))
+messages.push({ methodIndex:10, message:{guid:'1',props:[actionQueue(11)]} })
 if (cachedOnly) for (const packet of messages) {
   if (packet.message.name === b64('Avatar')) packet.message.props.props = packet.message.props.props.filter(p => p.name.sindex !== index(1070).sindex)
 }
@@ -77,6 +84,9 @@ const result = spawnSync(process.execPath, [path.join(root, 'runtime/collector/t
 assert.equal(result.status, 0, result.stderr)
 const rows = name => fs.readFileSync(path.join(output, name), 'utf8').trim().split('\n').map(JSON.parse)
 const stats = rows('statistics.jsonl'), hits = rows('damage-events.jsonl'), buffs = rows('buff-events.jsonl'), settlement = rows('settlement-details.jsonl')
+const actions = rows('action-events.jsonl')
+assert.deepEqual(actions.map(a=>a.actionKind),['snapshot','cast'])
+assert.equal(actions[1].sourceActorName,'离线验证角色');assert.equal(actions[1].rawSkillId,456)
 assert.equal(stats.length, 5); assert.equal(stats.at(-1).actors[0].damage, 100); assert.equal(stats.at(-1).actors[0].name, '离线验证角色')
 assert.equal(stats[2].battleTimer.phase, 'ended'); assert.equal(stats[2].battleTimer.endReason, 'server-dungeon-finish')
 assert.equal(stats[2].battleTimer.endObservedAt, '2026-01-01T00:00:07.000Z')

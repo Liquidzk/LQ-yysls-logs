@@ -6,6 +6,7 @@ const fs = require('node:fs'), path = require('node:path'), crypto = require('no
 const { spawn } = require('node:child_process'), readline = require('node:readline')
 const { OrderedCipher, BlockStream, statisticFromBytes } = require('./p1-live-core.cjs')
 const { damageEventsFromAreaSync } = require('./p1-rdps-damage-batch.cjs')
+const { actionEventsFromAreaSync, actionEventFromProperty } = require('./action-events.cjs')
 const { namesFromMatchWrapper } = require('./p1-identity-names.cjs')
 const { decodeStatisticPayload, settlementFromObject } = require('./p1-settlement-details.cjs')
 const { connectionBoundary } = require('./p1-capture-flags.cjs')
@@ -87,10 +88,18 @@ function receive(m, job) {
   }
   for (const e of m.buffEvents || []) append('buff-events.jsonl', { ...labelEvent(e, identities), ...stamp, sequence: ++counters.buffEvents })
   if (m.buffCoverage) buffCoverage = m.buffCoverage
+  for (const row of m.actionSyncs || []) {
+    const result = actionEventFromProperty(row)
+    for (const action of result.events) append('action-events.jsonl', { ...labelEvent(action, identities), ...stamp, sequence: counters.actionEvents = (counters.actionEvents || 0) + 1 })
+    for (const rejection of result.rejected) append('rejected-actions.jsonl', { ...rejection, ...stamp })
+  }
   for (const wrapper of m.events || []) {
     const result = damageEventsFromAreaSync(Buffer.from(wrapper.data, 'base64'), wrapper.targetActorHash, wrapper.methodIndex)
     for (const e of result.events) append('damage-events.jsonl', { ...labelEvent(e, identities), ...stamp, sequence: ++counters.damageEvents })
     for (const rejection of result.rejected) { counters.rejectedEvents++; append('rejected-events.jsonl', { ...rejection, ...stamp }) }
+    const actions = actionEventsFromAreaSync(Buffer.from(wrapper.data, 'base64'), wrapper.targetActorHash, wrapper.methodIndex)
+    for (const action of actions.events) append('action-events.jsonl', { ...labelEvent(action, identities), ...stamp, sequence: counters.actionEvents = (counters.actionEvents || 0) + 1 })
+    for (const rejection of actions.rejected) append('rejected-actions.jsonl', { ...rejection, ...stamp })
   }
   for (const e of m.encounterEvents || []) {
     append('encounter-events.jsonl', { ...labelEvent(e, identities), ...stamp })

@@ -4,6 +4,8 @@ from p1_encounter_schema import EncounterSchema
 from p1_buff_stream import BuffStream
 from p1_target_resource_stream import TargetResourceStream
 from p1_identity_stream import IdentityStream
+from p1_action_stream import ActionStream
+action_stream=ActionStream()
 identity_stream=IdentityStream()
 encounter_schema=EncounterSchema()
 buff_stream=BuffStream()
@@ -40,5 +42,5 @@ for line in sys.stdin:
   encounter_events.extend(target_resource_stream.consume(msg))
   buff_revision=buff_stream.revision
   buff_events=buff_stream.consume(msg)
-  print(json.dumps({'id':job['id'],'ok':True,'statistics':out,'events':events,'identities':identities,'identityRows':identity_stream.consume(msg),'encounterEvents':encounter_events,'buffEvents':buff_events,'buffCoverage':buff_stream.coverage() if job['id']%100==0 else None}),flush=True)
+  print(json.dumps({'id':job['id'],'ok':True,'statistics':out,'events':events,'identities':identities,'identityRows':identity_stream.consume(msg),'encounterEvents':encounter_events,'buffEvents':buff_events,'actionSyncs':action_stream.consume(msg,buff_stream.guids),'buffCoverage':buff_stream.coverage() if job['id']%100==0 else None}),flush=True)
  except Exception as e:print(json.dumps({'id':job.get('id') if 'job' in locals() else None,'ok':False,'error':type(e).__name__+': '+str(e)}),flush=True)
