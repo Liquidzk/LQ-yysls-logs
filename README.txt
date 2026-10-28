@@ -64,3 +64,9 @@ GPL-3.0-or-later，见 COPYING。
 runtime/、release/、游戏名称表、协议资产、原始战斗、个人配置和连接状态均不提交源代码仓库。
 
 完整操作说明见 docs/客户端使用说明.txt。
+
+GitHub 发布
+在已提交且干净的工作区运行 python tools/prepare-release.py，生成 release/github/v0.4.2 下的客户端压缩包、含 Kagerou 子模块的源码包、文件清单及 SHA256 校验文件。
+发布整理会校验采集代码和界面是否与当前源码一致，排除 desktop.local.json 与 Python 缓存，发现战斗记录或其他运行时数据时中止。不会修改正在运行的安装目录。
+先推送 vendor/kagerou 的 yanyun-desktop 分支，再推送主仓库 main，确保他人能够取得子模块固定提交。
+登录 GitHub CLI 后，用 gh release create v0.4.2 --verify-tag --prerelease --title "燕云 Logs 0.4.2 测试版" --notes-file docs/release-v0.4.2.txt 上传上述附件；需先创建并推送对应源码标签。
