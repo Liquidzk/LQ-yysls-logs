@@ -6,6 +6,8 @@ const stat = (damage, duration = 0, npcNo = 148) => ({ npcNo, timeCostSeconds: d
   actors: [{ idHash: 'player', damage, heal: 0, absorbDmg: 0 }] })
 const boundary = (active, initial = false) => ({ kind: 'boss-battle-state', active, initial,
   previousActive: initial ? null : !active, stateChanged: !initial, spaceHash: 'space' })
+const victory = (options = {}) => ({ kind: 'dungeon-finish-state', finished: true,
+  initial: false, previousFinished: false, stateChanged: true, spaceHash: 'space', ...options })
 const live = (timer, snapshot, pulse, now, running = true) => model.live({ latest: {
   ...snapshot, battleTimer: timer.snapshot(), lastPacketObservedAt: time(pulse), observedAt: time(pulse),
   source: { sessionId: 'test', mode: 'live' }, health: { session: 'valid', stale: false }
@@ -100,4 +102,48 @@ test('packet liveness keeps invulnerability phases ticking; stop and loss freeze
 test('timer formatting preserves unknown, zero and completed tenths', () => {
   assert.equal(model.formatTime(null), '—'); assert.equal(model.formatTime(0), '00:00.0')
   assert.equal(model.formatTime(59.99), '00:59.9'); assert.equal(model.formatTime(3600), '60:00.0')
+})
+
+test('victory freezes immediately and later counters cannot extend the end; settlement calibrates', () => {
+  const timer = new BattleTimer('victory')
+  timer.boundary(boundary(true), time(10)); timer.statistic(stat(100), time(14))
+  timer.boundary(victory(), time(15.25))
+  assert.equal(live(timer, stat(100), 18, 20).duration, 5.25)
+  assert.equal(live(timer, stat(100), 18, 20).timer.label, '已胜利 · 待校准')
+  timer.boundary(victory(), time(16)); timer.boundary(boundary(false), time(17))
+  timer.statistic(stat(110), time(18))
+  assert.equal(timer.snapshot().endObservedAt, time(15.25))
+  assert.equal(timer.snapshot().phase, 'ended')
+  timer.statistic(stat(110, 5.1), time(19))
+  assert.equal(timer.snapshot().durationSeconds, 5.1)
+  assert.equal(timer.snapshot().endObservedAt, time(15.25))
+  assert.equal(live(timer, stat(110), 19, 20).rows[0].dps, 110 / 5.1)
+})
+
+test('old snapshots and other scene victories cannot end the current pull', () => {
+  const timer = new BattleTimer('scopes'); timer.boundary(boundary(true), time(10))
+  for (const event of [victory({ initial: true }), victory({ spaceHash: 'old-scene' }), victory({ finished: false })]) {
+    timer.boundary(event, time(12)); assert.equal(timer.snapshot().phase, 'active')
+  }
+  timer.boundary(victory(), time(9)); assert.equal(timer.snapshot().phase, 'active')
+  timer.boundary(victory(), time(15)); timer.statistic(stat(100, 5), time(16))
+  timer.boundary(boundary(true), time(20)); timer.boundary(victory({ initial: true }), time(21))
+  assert.equal(timer.snapshot().phase, 'active')
+  assert.equal(timer.snapshot().startObservedAt, time(20))
+})
+
+test('matching immediate formal settlement calibrates before another periodic counter', () => {
+  const timer = new BattleTimer('formal')
+  timer.boundary(boundary(true), time(10)); timer.statistic(stat(90), time(14))
+  const detail = { timeCostSeconds: 4.8, actors: [{ actorHash: 'player', totals: { damage: 100, heal: 0, absorb_dmg: 0 } }] }
+  assert.equal(timer.settlement(detail, time(14)), false)
+  timer.boundary(victory(), time(15))
+  assert.equal(timer.settlement({ ...detail, actors: [] }, time(15.1)), false)
+  assert.equal(timer.settlement({ ...detail, actors: [{ ...detail.actors[0], actorHash: 'other' }] }, time(15.1)), false)
+  assert.equal(timer.settlement(detail, time(21)), false)
+  assert.equal(timer.settlement(detail, time(15.2)), true)
+  assert.equal(live(timer, stat(90), 20, 21).duration, 4.8)
+  assert.equal(live(timer, stat(90), 20, 21).rows[0].dps, 100 / 4.8)
+  timer.statistic(stat(100), time(16))
+  assert.equal(timer.snapshot().durationSeconds, 4.8)
 })

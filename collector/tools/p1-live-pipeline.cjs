@@ -94,15 +94,19 @@ function receive(m, job) {
   }
   for (const e of m.encounterEvents || []) {
     append('encounter-events.jsonl', { ...labelEvent(e, identities), ...stamp })
-    if (e.kind === 'boss-battle-state') {
+    if (e.kind === 'boss-battle-state' || e.kind === 'dungeon-finish-state') {
+      const before = battleTimer.snapshot()
       battleTimer.boundary(e, job.observedAt)
-      if (e.initial) clock = null
-      if (e.active && e.previousActive === false && e.stateChanged && !e.initial) {
+      if (e.kind === 'boss-battle-state' && e.initial) clock = null
+      if (e.kind === 'boss-battle-state' && e.active && e.previousActive === false && e.stateChanged && !e.initial) {
         clock = { source: { sessionId }, spaceHash: e.spaceHash, startObservedAt: job.observedAt, endObservedAt: null,
           npcNo: null, timingBasis: e.timingBasis, identityContext: e.identityContext }
       }
-      if (!e.active && clock?.spaceHash === e.spaceHash) clock.endObservedAt = job.observedAt
-      latest.encounterClock = clock; publish()
+      const after = battleTimer.snapshot()
+      if (clock?.spaceHash === e.spaceHash && after.endObservedAt && !clock.endObservedAt) clock.endObservedAt = after.endObservedAt
+      if (before.phase !== after.phase || before.key !== after.key) append('timer-events.jsonl', { ...stamp, trigger: e.kind, battleTimer: after })
+      // Terminal signals must not wait for another counter or the 500 ms coalescer.
+      latest.encounterClock = clock; publish(true)
     }
   }
   for (const encoded of m.statistics || []) {
@@ -112,6 +116,10 @@ function receive(m, job) {
         const detail = settlementFromObject(decoded)
         append('settlement-details.jsonl', { ...detail, ...stamp, sequence: ++counters.settlements,
           encounterContext: clock ? { ...clock, association: 'receive-order-context' } : null })
+        if (battleTimer.settlement(detail, job.observedAt)) {
+          append('timer-events.jsonl', { ...stamp, trigger: 'server-detailed-settlement', battleTimer: battleTimer.snapshot() })
+          publish(true)
+        }
         continue
       }
       const stat = statisticFromBytes(bytes)

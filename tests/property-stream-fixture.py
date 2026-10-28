@@ -7,6 +7,7 @@ from google.protobuf import descriptor_pool,message_factory,json_format
 from p1_buff_stream import BuffStream
 from p1_identity_stream import IdentityStream
 from property_preset import PropertyPreset
+from p1_encounter_schema import EncounterSchema
 pool=descriptor_pool.DescriptorPool()
 for n in ['common.proto','client_gate.proto']:pool.AddSerializedFile((root/('runtime/collector/evidence/p0/runtime-rpc-analysis/'+n+'.descriptor.bin')).read_bytes())
 from base64 import b64encode
@@ -55,4 +56,22 @@ e=unknown.consume(message('AoiProp',{'guid':'2','props':[{'path':[idx(1496),idx(
 assert e['buffNo']==102 and e['targetActorHash'] is None and e['targetGuid']=='2'
 try:PropertyPreset('0'*64);raise AssertionError('Unknown build accepted')
 except ValueError:pass
+# Victory uses the independently extracted current SpaceData property indices.
+encounter=EncounterSchema()
+space=lambda ident,guid,finished:message('AreaCreateEntityMsg',{'name':b64encode(b'SpaceData').decode(),'id':b64encode(ident).decode(),'guid':str(guid),'props':{'props':[
+ {'name':idx(2873),'dict':{'item':[prop(2880,{'bvalue':finished}),prop(4745,{'bvalue':False})]}}
+]}})
+initial=encounter.consume(space(b'combat-space',20,False))
+assert any(e['kind']=='dungeon-finish-state' and not e['finished'] and e['initial'] for e in initial)
+finish={'path':[idx(2873)],**prop(2880,{'ivalue':1})}
+win=encounter.consume(message('AoiProp',{'guid':'20','props':[finish]}))
+assert len(win)==1 and win[0]['kind']=='dungeon-finish-state' and win[0]['finished']
+assert win[0]['previousFinished'] is False and not win[0]['initial']
+assert win[0]['spaceHash']==hashlib.sha256(b'combat-space').hexdigest()[:16]
+assert encounter.consume(message('AoiProp',{'guid':'20','props':[finish]}))==[]
+assert encounter.consume(message('AoiProp',{'guid':'999','props':[finish]}))==[]
+assert encounter.consume(message('AoiProp',{'guid':'20','props':[{**finish,'eid':b64encode(b'other-space').decode()}]}))==[]
+assert encounter.consume(message('AoiProp',{'guid':'20','props':[{'path':[idx(2873)],**prop(2880,{'ivalue':9})}]}))==[]
+loaded=encounter.consume(space(b'completed-scene',21,True))
+assert any(e['kind']=='dungeon-finish-state' and e['finished'] and e['initial'] for e in loaded)
 print(json.dumps({'passed':True,'preset':stream.preset.id,'checks':['name','explicit-eid','team-names','identity-isolation','buff-fields','patch-state','remove','unresolved-guid-isolation','unknown-build-rejected']}))

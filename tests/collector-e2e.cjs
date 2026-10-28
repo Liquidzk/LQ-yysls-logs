@@ -17,6 +17,7 @@ const prop = (name, value) => ({ name: index(name), value })
 const clock = active => ({ name: index(2817), dict: { item: [prop(4662, { bvalue: active })] } })
 const mapping = JSON.parse(fs.readFileSync(path.join(root, 'runtime/collector/evidence/p1/encounter-retest/index-names.json')))
 const field = name => { const row = mapping.rows.find(r => r.name === name); if (!row) throw Error('Missing property ' + name); return row.index }
+const finish = done => ({ name: index(2817), dict: { item: [prop(field('dungeon_finish'), { bvalue: done })] } })
 const buff = { name: index(field('buffs_data')), dict: { item: [{ name: index(field('ac_buffs')), dict: { item: [{ name: bytes('synthetic-buff'), oper: 49, dict: { item: [
   prop(field('No'), integer(123)), prop(field('fromid'), bytes('actor-b')), prop(field('duration'), integer(100)), prop(field('start_ts'), integer(1000)), prop(field('charge_level'), integer(2))
 ] } }] } }] } }
@@ -26,17 +27,20 @@ const counters = (amount, seconds = 0) => area(0x2e77db68, [{ npc_no: 7, stat_ty
 const inner = [100, 100, Buffer.from('actor-a'), 456, 789, null, null, null, 1, null, null, 0, null, 0, 1, null, null]
 const messages = [
   { methodIndex: 12, message: { name: b64('Avatar'), id: b64('actor-b'), guid: '3', props: { props: [{ name: index(1070), dict: { item: [prop(5982, bytes('队友示例'))] } }] } } },
-  { methodIndex: 12, message: { name: b64('SpaceData'), id: b64('space'), guid: '2', props: { props: [clock(false)] } } },
+  { methodIndex: 12, message: { name: b64('SpaceData'), id: b64('space'), guid: '2', props: { props: [clock(false), finish(false)] } } },
   { methodIndex: 10, message: { guid: '2', props: [clock(true)] } },
   { methodIndex: 12, message: { name: b64('Avatar'), id: b64('actor-a'), guid: '1', props: { props: [{ name: index(1070), dict: { item: [prop(5982, bytes('离线验证角色'))] } }, buff] } } },
   counters(0),
   area(1164740750, [1792714907, Buffer.from(encode(inner))]),
   counters(100),
+  { methodIndex: 10, message: { guid: '2', props: [finish(true)] } },
+  counters(100),
   { methodIndex: 10, message: { guid: '2', props: [clock(false)] } },
-  counters(100, 5),
-  counters(100, 0),
   area(0x2e77db68, [{ stat_type: 2, time_cost: 5, combat_stat: { 'actor-a': { combat_stat: { damage: 100, heal: 0, absorb_dmg: 20 },
-    combat_stat_detail: { target: { damage: { '456': 100 }, heal: {}, absorb_dmg: {} } } } } }])
+    combat_stat_detail: { target: { damage: { '456': 100 }, heal: {}, absorb_dmg: {} } } },
+    'actor-b': { combat_stat: { damage: 0, heal: 50, absorb_dmg: 0 }, combat_stat_detail: {} } } }]),
+  counters(100, 5),
+  counters(100, 0)
 ]
 if (cachedOnly) for (const packet of messages) {
   if (packet.message.name === b64('Avatar')) packet.message.props.props = packet.message.props.props.filter(p => p.name.sindex !== index(1070).sindex)
@@ -73,7 +77,12 @@ const result = spawnSync(process.execPath, [path.join(root, 'runtime/collector/t
 assert.equal(result.status, 0, result.stderr)
 const rows = name => fs.readFileSync(path.join(output, name), 'utf8').trim().split('\n').map(JSON.parse)
 const stats = rows('statistics.jsonl'), hits = rows('damage-events.jsonl'), buffs = rows('buff-events.jsonl'), settlement = rows('settlement-details.jsonl')
-assert.equal(stats.length, 4); assert.equal(stats.at(-1).actors[0].damage, 100); assert.equal(stats.at(-1).actors[0].name, '离线验证角色')
+assert.equal(stats.length, 5); assert.equal(stats.at(-1).actors[0].damage, 100); assert.equal(stats.at(-1).actors[0].name, '离线验证角色')
+assert.equal(stats[2].battleTimer.phase, 'ended'); assert.equal(stats[2].battleTimer.endReason, 'server-dungeon-finish')
+assert.equal(stats[2].battleTimer.endObservedAt, '2026-01-01T00:00:07.000Z')
+const calibrated = rows('timer-events.jsonl').find(e => e.trigger === 'server-detailed-settlement')
+assert.equal(calibrated.battleTimer.durationSeconds, 5)
+assert.equal(calibrated.battleTimer.endObservedAt, '2026-01-01T00:00:07.000Z')
 assert.equal(stats.at(-1).timeCostSeconds, 0)
 assert.equal(stats.at(-1).battleTimer.phase, 'finalized'); assert.equal(stats.at(-1).battleTimer.durationSeconds, 5)
 assert.equal(hits.length, 1); assert.equal(hits[0].amount, 100); assert.equal(hits[0].rawSkillId, 456)

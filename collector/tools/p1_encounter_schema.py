@@ -2,6 +2,8 @@
 
 Evidence: encounter-retest/index-names.json; static local-dungeon main/36;
 party-retest record 2248/3115/14476. Timings remain packet receive times.
+SpaceDataMember._on_dungeon_finish dispatches E_DUNGEON_FINISH when
+dungeon.dungeon_finish becomes true, before requesting STAT_JIESUAN.
 """
 import hashlib
 from p1_encounter_identity import EncounterIdentity
@@ -10,6 +12,7 @@ class EncounterSchema:
  def __init__(self):
   self.spaces={}
   self.states={}
+  self.finished={}
   self.identity=EncounterIdentity()
   self.preset=self.identity.preset
 
@@ -34,15 +37,22 @@ class EncounterSchema:
    path=[key(x) for x in item.path] if item.path else list(parent)
    if item.HasField('name'):path.append(key(item.name))
    path=[x for x in path if x is not None]
-   if path==['dungeon','is_in_boss_battle'] and item.HasField('value'):
+   if path in (['dungeon','is_in_boss_battle'],['dungeon','dungeon_finish']) and item.HasField('value'):
     val=item.value
     active=bool(val.bvalue) if val.HasField('bvalue') else bool(val.ivalue) if val.HasField('ivalue') and val.ivalue in (0,1) else None
     if active is not None:
-     prev=self.states.get(space_hash)
+     finished=path[-1]=='dungeon_finish'
+     states=self.finished if finished else self.states
+     prev=states.get(space_hash)
      if initial or prev is None or active!=prev:
       context=self.identity.context(self.identity.spaces[space_hash])
-      out.append({'kind':'boss-battle-state','active':active,'initial':initial,'previousActive':prev,'stateChanged':prev is not None and active!=prev,'spaceHash':space_hash,'identityContext':context,'propertyPath':['dungeon','is_in_boss_battle'],'propertyIndexes':[self.preset.indexes[n] for n in ('dungeon','is_in_boss_battle')],'preset':self.preset.id,'timingBasis':'server_state_received; packet reception, not a server event timestamp'})
-     self.states[space_hash]=active
+      out.append({'kind':'dungeon-finish-state' if finished else 'boss-battle-state',
+       'finished' if finished else 'active':active,'initial':initial,
+       'previousFinished' if finished else 'previousActive':prev,
+       'stateChanged':prev is not None and active!=prev,'spaceHash':space_hash,'identityContext':context,
+       'propertyPath':path,'propertyIndexes':[self.preset.indexes[n] for n in path],'preset':self.preset.id,
+       'timingBasis':'server_state_received; packet reception, not a server event timestamp'})
+     states[space_hash]=active
    if item.HasField('dict'):
     for sub in item.dict.item:walk(sub,path)
   for item in props:walk(item,[])

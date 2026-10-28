@@ -9,26 +9,58 @@ const total = stat => stat.actors.reduce((n, a) => n + a.damage + a.heal + a.abs
 class BattleTimer {
   constructor(sessionId) {
     this.sessionId = sessionId; this.ordinal = 0; this.current = null
-    this.previous = null; this.zeroAt = null
+    this.previous = null; this.zeroAt = null; this.spaceHash = null
   }
   start(observedAt, basis, npcNo = null, spaceHash = null) {
     this.current = { key: this.sessionId + ':' + ++this.ordinal, phase: 'active',
       startObservedAt: observedAt, endObservedAt: null, basis, npcNo, spaceHash,
       durationSeconds: null, correctionSeconds: null, finalActors: null }
+    this.current.spaceHash ??= this.spaceHash
   }
   boundary(event, observedAt) {
+    if (event.kind === 'dungeon-finish-state') {
+      // The game raises E_DUNGEON_FINISH from this property before requesting
+      // the settlement. A completed scene snapshot is not a new victory.
+      if (at(observedAt) !== null && !event.initial && event.finished === true &&
+          this.current?.phase === 'active' && this.current.spaceHash === event.spaceHash &&
+          at(observedAt) >= at(this.current.startObservedAt)) {
+        Object.assign(this.current, { phase: 'ended', endObservedAt: observedAt,
+          endReason: 'server-dungeon-finish' })
+        this.zeroAt = null
+      }
+      return
+    }
     if (event.kind !== 'boss-battle-state' || at(observedAt) === null) return
+    if (event.initial || event.active) this.spaceHash = event.spaceHash
     if (event.active && event.previousActive === false && event.stateChanged && !event.initial) {
       this.start(observedAt, 'server-battle-state', null, event.spaceHash)
       this.previous = null; this.zeroAt = null
     } else if (!event.active && this.current?.phase === 'active' &&
         (!this.current.spaceHash || this.current.spaceHash === event.spaceHash)) {
       this.current.phase = 'ended'; this.current.endObservedAt = observedAt
+      this.current.endReason = 'server-battle-state'
     } else if (event.initial && this.current?.phase === 'active' &&
         this.current.spaceHash && this.current.spaceHash !== event.spaceHash) {
       this.current.phase = 'interrupted'; this.current.endObservedAt = observedAt
       this.previous = null; this.zeroAt = null
     }
+  }
+  settlement(detail, observedAt) {
+    const current = this.current, previous = this.previous
+    // STAT_JIESUAN is sent before the next periodic counter. It has no attempt
+    // ID, so only associate an immediate response with an observed ended pull
+    // and exactly the same roster. Keep incomplete/late replies in the ledger.
+    const delay = at(observedAt) - at(current?.endObservedAt)
+    if (current?.phase !== 'ended' || !current.startObservedAt || !previous ||
+        !positive(detail.timeCostSeconds) || !Number.isFinite(delay) || delay < 0 || delay > 5000 ||
+        detail.timeCostSeconds > (at(observedAt) - at(current.startObservedAt)) / 1000 + 5) return false
+    const old = new Map(previous.actors.map(a => [a.idHash, a]))
+    if (detail.actors.length !== old.size || new Set(detail.actors.map(a => a.actorHash)).size !== old.size ||
+        detail.actors.some(a => !old.has(a.actorHash))) return false
+    const actors = detail.actors.map(a => ({ ...old.get(a.actorHash),
+      damage: a.totals.damage, heal: a.totals.heal, absorbDmg: a.totals.absorb_dmg }))
+    this.statistic({ npcNo: current.npcNo, timeCostSeconds: detail.timeCostSeconds, actors }, observedAt)
+    return this.current?.phase === 'finalized'
   }
   statistic(stat, observedAt) {
     if (at(observedAt) === null || !stat.actors.length) return
