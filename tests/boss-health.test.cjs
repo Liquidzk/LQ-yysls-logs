@@ -1,0 +1,28 @@
+const test = require('node:test'), assert = require('node:assert/strict')
+const { BossHealth } = require('../collector/tools/boss-health.cjs')
+const model = require('../vendor/kagerou/yanyun/model.js')
+const event = (id, actor, hp, max) => ({ kind:'npc-health', npcTemplateNo:id, actorHash:actor, available:true, currentHp:hp, maxHp:max })
+test('Boss catalog excludes adds and preserves exact dual-body identities', () => {
+  const h = new BossHealth()
+  h.consume(event(92000002,'add',10,20),'now'); assert.equal(h.snapshot().rows.length,0)
+  h.consume(event(22800004,'body',500,1000),'now')
+  let rows = h.snapshot().rows; assert.equal(rows.length,2); assert.equal(rows[1].available,false)
+  h.consume(event(22800007,'soul',800,2000),'now');rows=h.snapshot().rows
+  assert.equal(rows[0].currentHp,500);assert.equal(rows[1].maxHp,2000)
+  h.consume({ ...event(22800007,'soul'), reason:'observed_aoi_leave', available:false },'later')
+  assert.equal(h.snapshot().rows[1].currentHp,null)
+  h.consume({...event(22800004,'body'),reason:'space-snapshot'},'later');assert.equal(h.snapshot().rows.length,0)
+})
+test('Boss freshness uses connection pulse, independently of damage statistics', () => {
+  const now=Date.parse('2026-01-01T00:00:10Z'), h=new BossHealth()
+  h.consume(event(22800004,'body',500,1000));h.consume(event(22800007,'soul',800,2000))
+  const s={bossHealth:h.snapshot(),source:{mode:'live'},health:{session:'valid',stale:true},lastPacketObservedAt:new Date(now).toISOString()}
+  const view=model.bossView(s,true,now)
+  assert.equal(view.live,true);assert.equal(view.difference,10)
+  assert.equal(model.bossView(s,true,now+3501).live,false)
+  assert.equal(model.bossView({...s,health:{session:'valid',gap:true}},true,now).live,false)
+  assert.equal(model.bossView({...s,source:{mode:'replay'}},true,now).live,false)
+  h.consume(event(22800004,'body',0,1000));s.bossHealth=h.snapshot()
+  assert.equal(model.bossView(s,false,now).rows[0].percent,0)
+  assert.equal(model.review({}).bossHealth,undefined)
+})

@@ -14,6 +14,7 @@ const { LedgerWriter } = require('./p1-ledger-writer.cjs')
 const { SnapshotPublisher } = require('./p1-snapshot-publisher.cjs')
 const { BattleArchive } = require('./battle-archive.cjs')
 const { BattleTimer } = require('./battle-timer.cjs')
+const { BossHealth } = require('./boss-health.cjs')
 const { validIdentity, labelEvent } = require('./event-names.cjs')
 const args = process.argv.slice(2), opts = {}
 for (let i = 0; i < args.length; i += 2) opts[args[i].replace(/^--/, '')] = args[i + 1]
@@ -27,6 +28,7 @@ const state = require('./p1-cipher-anchor.cjs').loadCipherAnchor(c)
 const sessionId = hash(Buffer.from(JSON.stringify([c.pid, c.processStartUtc, c.flow, c.serverEncryptedOrigin, c.initialStateSha256]))).slice(0, 24)
 const source = { mode, sessionId }, ledger = new LedgerWriter(), publisher = new SnapshotPublisher()
 const battleTimer = new BattleTimer(sessionId)
+const bossHealth = new BossHealth()
 const archive = new BattleArchive(out, source), identities = new Map()
 if (c.identityCacheFile && fs.existsSync(c.identityCacheFile) && fs.statSync(c.identityCacheFile).size <= 2 * 1024 * 1024) {
   try { for (const row of JSON.parse(fs.readFileSync(c.identityCacheFile)).names || []) if (validIdentity(row)) identities.set(row.idHash, { ...row, cached: true }) } catch {}
@@ -48,13 +50,14 @@ fs.writeFileSync(path.join(out, 'manifest.json'), JSON.stringify({ schemaVersion
   mode, sessionId, configSha256: hash(fs.readFileSync(configPath)), pid: c.pid, processStartUtc: c.processStartUtc,
   limits: ['Only messages delivered to this client are visible.', 'Notification times are packet reception times.',
     'Cumulative counters are not summed with per-hit notifications.', 'Complete teammate casts/private buffs and rDPS remain unverified.'] }, null, 2))
-function publish(force = false) {
+function publish(force = false, archiveChange = true) {
   latest.battleTimer = battleTimer.snapshot()
   latest.lastPacketObservedAt = lastPacketObservedAt
+  latest.bossHealth = bossHealth.snapshot()
   // Archive boundaries and counter sequences before UI publication is coalesced.
-  try { archive.update(latest, [...identities.values()]) } catch (error) { append('archive-errors.jsonl', { message: error.message }) }
+  if (archiveChange) try { archive.update(latest, [...identities.values()]) } catch (error) { append('archive-errors.jsonl', { message: error.message }) }
   if (!force && Date.now() - lastPublish < 500) {
-    if (!publishTimer) publishTimer = setTimeout(() => { publishTimer = null; publish(true) }, 500)
+    if (!publishTimer) publishTimer = setTimeout(() => { publishTimer = null; publish(true, false) }, 500)
     return
   }
   lastPublish = Date.now()
@@ -80,6 +83,7 @@ function identify(rows, job) {
 }
 function receive(m, job) {
   lastPacketObservedAt = job.observedAt
+  if (latest.health.session === 'pending') latest.health = { ...latest.health, status: 'healthy', session: mode === 'live' ? 'valid' : 'recorded' }
   const stamp = { source, observedAt: job.observedAt, transportRecordOrdinal: job.recordOrdinal }
   identify(m.identityRows || [], job)
   for (const wrapper of m.identities || []) {
@@ -103,6 +107,7 @@ function receive(m, job) {
   }
   for (const e of m.encounterEvents || []) {
     append('encounter-events.jsonl', { ...labelEvent(e, identities), ...stamp })
+    if (bossHealth.consume(e, job.observedAt)) publish(false, false)
     if (e.kind === 'boss-battle-state' || e.kind === 'dungeon-finish-state') {
       const before = battleTimer.snapshot()
       battleTimer.boundary(e, job.observedAt)

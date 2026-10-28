@@ -5,6 +5,8 @@ from p1_buff_stream import BuffStream
 from p1_target_resource_stream import TargetResourceStream
 from p1_identity_stream import IdentityStream
 from p1_action_stream import ActionStream
+from p1_boss_health_stream import BossHealthStream
+boss_health_stream=BossHealthStream()
 action_stream=ActionStream()
 identity_stream=IdentityStream()
 encounter_schema=EncounterSchema()
@@ -40,6 +42,7 @@ for line in sys.stdin:
   out=[];events=[];identities=[];walk(msg,out,events,identities,msg.DESCRIPTOR.name)
   encounter_events=encounter_schema.consume(msg)
   encounter_events.extend(target_resource_stream.consume(msg))
+  encounter_events.extend(boss_health_stream.consume(msg))
   buff_revision=buff_stream.revision
   buff_events=buff_stream.consume(msg)
   print(json.dumps({'id':job['id'],'ok':True,'statistics':out,'events':events,'identities':identities,'identityRows':identity_stream.consume(msg),'encounterEvents':encounter_events,'buffEvents':buff_events,'actionSyncs':action_stream.consume(msg,buff_stream.guids),'buffCoverage':buff_stream.coverage() if job['id']%100==0 else None}),flush=True)

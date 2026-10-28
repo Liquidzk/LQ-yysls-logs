@@ -1,0 +1,38 @@
+Boss 血量采集（0.4.5）
+
+数据路径
+Npc 创建快照、AoiProp 增量属性中的 attr.HP、attr.HP_MAX、attr.salt。
+依据 common/property_define/common_prop/attr_base.lua，这三个属性均投影给 ALL_CLIENTS。
+依据 client/entities/server/common_members/attr_base.lua，属性取值调用 rm_salt；血量并非伤害累计值。
+
+数值还原
+只启用已核对的 cn-win64r-20261023，程序 SHA256：
+4483a00721a7b08a21f3cfb666eb6a8858dacf2e3830956be98c569bac746d1b。
+在此前由用户运行的只读程序代码资料中，formula_tree 注册项定位到：
+add_salt RVA 0x216ddd0；rm_salt RVA 0x216df20。
+add_salt 将 double 的 64 位位模式与整数 salt 异或，按整数返回。
+rm_salt 在 RVA 0x216e07f 异或两个整数，在 0x216e0ab 将位模式作为 double 返回；输入零直接返回零。
+采集器在 Python 中保留整数的全部 64 位，再输出还原后的数值，避免 JavaScript 的大整数精度损失。
+salt 变更时丢弃没有同时更新的旧编码值。没有可靠上限、数值无效或未验证版本时不生成百分比。
+
+目标识别
+tools/build-boss-catalog.py 沿 entity.base_tag → entity_tags 及 gameplay_tag → entity_additional_tags 读取 TAG_BOSS_MONSTER。
+不通过血量大小、名称相似程度、伤害统计的 npc_no 判断 Boss；后者不等同实体模板编号。
+目录保存经过解析的模板标签，不含个人身份、会话状态或原始资源。
+
+愁铃客
+多人本主体实体 22800004，场景 140001 摆放表和 fuben_info.fight_entity_id 对应。
+boss_dr_clk_misc.DEFAULT_SOUL_BOSS_ENTITY_NO 明确为 22800007。
+choulingke_dual_blood_controller 的肉体条读主体 get_hp/get_max_hp，灵魂条绑定该灵魂实体并独立读 get_hp/get_max_hp。
+两者分开显示当前值、上限和百分比；显示百分比差，不相加为单一总血量。
+任意一侧未收到完整快照时显示等待，不以 100% 或 0% 代替。
+
+失效与性能
+离开可见范围、实体 GUID 重用、场景快照会清理对应旧状态。未知 GUID 的离场不会清空其他实体。
+断线、采集停止或包心跳超过 3.5 秒，悬浮窗保留末次值并标记暂停。
+血量新鲜度独立于伤害统计；无伤害阶段仍可正常更新。
+所有数据来自既有被动采集通道；UI 仍每 250 毫秒读取本地服务，快照写入沿用 500 毫秒合并，不新增游戏网络请求或内存轮询。
+
+验证
+两份保留的真实传输记录恢复了 92000001 的 3,086 次 HP 更新（上限 39,098,936.9277，最低到零），以及 24800009 的 355 次更新（上限 74,797,805.7）。
+真实样本未覆盖愁铃客双实体战斗；双血条依据上述客户端控制器，并通过完整协议回放、独立上限、缺失单侧、离场、回血、归零、数值变换和悬浮窗 UI 验证。

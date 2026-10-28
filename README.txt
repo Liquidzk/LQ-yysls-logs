@@ -1,4 +1,4 @@
-LQ 燕云 Logs 0.4.4
+LQ 燕云 Logs 0.4.5
 ================
 
 Windows 独立客户端：手动选择燕云进程后采集，实时悬浮统计，保存捕获记录用于复盘；也可单独导入游戏本地 CLv2 日志。
@@ -43,7 +43,7 @@ Kagerou 上游源码仍在子模块中便于追溯，发行包仅允许 yanyun/ 
    可用 --observed <编号出现次数.json> 生成覆盖核对。源输入为本机资料，不随源码包发布；发行包包含生成的名称表。
 6. powershell -NoProfile -ExecutionPolicy Bypass -File tools/build-engine.ps1 -Python <Python 路径>
 7. npm run package
-8. 输出 release/v0.4.4/LQ-yysls-logs-win32-x64/燕云Logs.exe；完整目录一起使用。
+8. 输出 release/v0.4.5/LQ-yysls-logs-win32-x64/燕云Logs.exe；完整目录一起使用。
 
 开发运行：先构建解析引擎、准备采集资源，再 npm start。
 可在根目录创建 desktop.local.json 指定 dataDir 和 logRoot；该配置只保存在本机。
@@ -71,7 +71,7 @@ runtime/、release/、游戏名称表、协议资产、原始战斗、个人配�
 完整操作说明见 docs/客户端使用说明.txt。
 
 GitHub 发布
-在已提交且干净的工作区运行 python tools/prepare-release.py，生成 release/github/v0.4.4 下的客户端压缩包、含 Kagerou 子模块的源码包、文件清单及 SHA256 校验文件。
+在已提交且干净的工作区运行 python tools/prepare-release.py，生成 release/github/v0.4.5 下的客户端压缩包、含 Kagerou 子模块的源码包、文件清单及 SHA256 校验文件。
 发布整理会校验采集代码和界面是否与当前源码一致，排除 desktop.local.json 与 Python 缓存，发现战斗记录或其他运行时数据时中止。不会修改正在运行的安装目录。
 先推送 vendor/kagerou 的 yanyun-desktop 分支，再推送主仓库 main，确保他人能够取得子模块固定提交。
-登录 GitHub CLI 后，用 gh release create v0.4.4 --verify-tag --prerelease --title "燕云 Logs 0.4.4 测试版" --notes-file docs/release-v0.4.4.txt 上传上述附件；需先创建并推送对应源码标签。
+登录 GitHub CLI 后，用 gh release create v0.4.5 --verify-tag --prerelease --title "燕云 Logs 0.4.5 测试版" --notes-file docs/release-v0.4.5.txt 上传上述附件；需先创建并推送对应源码标签。
