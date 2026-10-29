@@ -13,7 +13,7 @@ from pathlib import Path
 import re
 
 
-def build(documents, locale, observed=None):
+def build(documents, locale, observed=None, supplements=None):
     tables = {k: v['rows'] for k, v in documents.items()}
     names = {k: {} for k in ('skills', 'buffs', 'scenes', 'npcs', 'actors')}
     evidence = {k: {} for k in names}
@@ -65,6 +65,33 @@ def build(documents, locale, observed=None):
                                         'name': names['skills'][parent], 'resolution': 'main_skill', 'label': '主技能名称（保留动作编号）'}
             unresolved['skills'].pop(ident, None); changed = True
         if not changed: break
+    # A reviewed UI/resource cross-check is scoped to an exact row and text key.
+    # Reject stale mappings after game updates instead of inheriting by ID range.
+    allowed = {kind: (table, fields) for kind, table, fields in specs}
+    seen = set()
+    for item in (supplements or {}).get('entries', []):
+        kind, table, ident, field = (item.get(k) for k in ('kind', 'table', 'row', 'field'))
+        if kind not in allowed or table != allowed[kind][0] or field not in allowed[kind][1]:
+            raise ValueError('Invalid supplement table/field')
+        if (kind, ident) in seen: raise ValueError('Duplicate name supplement')
+        seen.add((kind, ident))
+        row = tables.get(table, {}).get(ident, {})
+        value = row.get('values', {}).get(field)
+        if row.get('deleted') or type(value) is not int or str(value % (1 << 64)) != item.get('text_key'):
+            raise ValueError(f'Stale name supplement: {kind}/{ident}')
+        name, source = item.get('name'), item.get('evidence')
+        if not isinstance(name, str) or not 1 <= len(name.strip()) <= 120 or '\ufffd' in name or any(ord(c) < 32 for c in name):
+            raise ValueError('Invalid supplement name')
+        if not isinstance(source, dict) or not source.get('method') or not source.get('sources'):
+            raise ValueError('Name supplement requires review evidence')
+        name = name.strip()
+        if ident in names[kind] and names[kind][ident] != name:
+            raise ValueError(f'Name supplement conflicts with decoded resource: {kind}/{ident}')
+        names[kind][ident] = name
+        evidence[kind][ident] = {'table': table, 'row': ident, 'field': field, 'text_key': item['text_key'],
+                                'name': name, 'resolution': 'resource_crosscheck',
+                                'label': '客户端资源与游戏界面交叉核验', 'evidence': source}
+        unresolved[kind].pop(ident, None)
     summary = {}
     for kind in unresolved:
         ids = (observed or {}).get(kind, {})
@@ -91,12 +118,16 @@ if __name__ == '__main__':
     parser.add_argument('--rows', required=True, type=Path)
     parser.add_argument('--locale', required=True, nargs='+', type=Path)
     parser.add_argument('--observed', type=Path)
+    parser.add_argument('--supplements', type=Path, default=Path(__file__).with_name('verified-name-supplements.json'))
     parser.add_argument('--output', required=True, type=Path)
     args = parser.parse_args()
     read = lambda p: json.loads(p.read_text('utf-8'))
     locale = {}
     for file in args.locale: locale.update(read(file))
-    result = build(read(args.rows), locale, read(args.observed) if args.observed else {})
-    result['inputs'] = {p.name: hashlib.sha256(p.read_bytes()).hexdigest() for p in [args.rows, *args.locale]}
+    result = build(read(args.rows), locale, read(args.observed) if args.observed else {},
+                   read(args.supplements) if args.supplements.exists() else {})
+    inputs = [args.rows, *args.locale]
+    if args.supplements.exists(): inputs.append(args.supplements)
+    result['inputs'] = {p.name: hashlib.sha256(p.read_bytes()).hexdigest() for p in inputs}
     args.output.write_text(json.dumps(result, ensure_ascii=False, separators=(',', ':')), 'utf-8')
     print(json.dumps(result['summary'], ensure_ascii=False, indent=2))

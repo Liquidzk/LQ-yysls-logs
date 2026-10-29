@@ -20,4 +20,34 @@ class NameCatalogTests(unittest.TestCase):
         self.assertEqual(result['summary']['skills']['mapped_event_occurrences'],5)
         self.assertNotIn('11',result['names']['buffs'])
 
+    def supplement(self):
+        return {'entries':[{'kind':'buffs','table':'buff','row':'10','field':'buff_name',
+                            'text_key':'123','name':'崩解','evidence':{'method':'game-ui-and-exact-resource','sources':['local-reviewed-ui']}}]}
+
+    def test_reviewed_name_requires_exact_row_and_retains_evidence(self):
+        docs={'buff':{'rows':{'10':{'values':{'buff_name':123}},'11':{'values':{'buff_name':124}}}}}
+        result=module.build(docs,{}, {'buffs':{'10':3,'11':1}},self.supplement())
+        self.assertEqual(result['names']['buffs'],{'10':'崩解'})
+        self.assertEqual(result['summary']['buffs']['mapped_event_occurrences'],3)
+        self.assertNotIn('10',result['unresolved']['buffs'])
+        self.assertIn('11',result['unresolved']['buffs'])
+        self.assertEqual(result['provenance']['buffs']['10']['resolution'],'resource_crosscheck')
+
+    def test_stale_or_conflicting_supplement_is_rejected(self):
+        docs={'buff':{'rows':{'10':{'values':{'buff_name':123}}}}}
+        with self.assertRaisesRegex(ValueError,'conflicts'):
+            module.build(docs,{'123':'另一个效果'},supplements=self.supplement())
+        docs['buff']['rows']['10']['values']['buff_name']=124
+        with self.assertRaisesRegex(ValueError,'Stale'):
+            module.build(docs,{},supplements=self.supplement())
+
+    def test_duplicate_or_unreviewed_supplement_is_rejected(self):
+        docs={'buff':{'rows':{'10':{'values':{'buff_name':123}}}}}
+        supplement=self.supplement();supplement['entries']*=2
+        with self.assertRaisesRegex(ValueError,'Duplicate'):
+            module.build(docs,{},supplements=supplement)
+        supplement=self.supplement();supplement['entries'][0].pop('evidence')
+        with self.assertRaisesRegex(ValueError,'requires review evidence'):
+            module.build(docs,{},supplements=supplement)
+
 if __name__=='__main__':unittest.main()

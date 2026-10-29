@@ -1,0 +1,90 @@
+{
+  "version": 1,
+  "entries": [
+    {
+      "kind": "buffs",
+      "table": "buff",
+      "row": "10245311",
+      "field": "buff_name",
+      "text_key": "15911840800834424807",
+      "name": "崩解",
+      "evidence": {
+        "method": "game-ui-description-and-exact-local-resource",
+        "sources": [
+          "https://img1.wywyx.com/uploads/allimg/250114/61-250114205I0.jpg"
+        ],
+        "note": "Game UI names the stacking effect in the matching Duanshi description. All four names reference the same six dictionary bytes; the cooldown appends the already decoded suffix. No numeric-prefix inheritance.",
+        "sourceImageSHA256": "66eef9d1ed566267d7236be901179c2abb016170b42a59b9983ff8ff54045d81",
+        "resourceSHA256": "e4374caa590af83b015e91f415652b180e3f8decfac1ce4c8f8d06967c387458"
+      }
+    },
+    {
+      "kind": "buffs",
+      "table": "buff",
+      "row": "10245321",
+      "field": "buff_name",
+      "text_key": "13746677522304973979",
+      "name": "崩解",
+      "evidence": {
+        "method": "game-ui-description-and-exact-local-resource",
+        "sources": [
+          "https://img1.wywyx.com/uploads/allimg/250114/61-250114205I0.jpg"
+        ],
+        "note": "Game UI names the stacking effect in the matching Duanshi description. All four names reference the same six dictionary bytes; the cooldown appends the already decoded suffix. No numeric-prefix inheritance.",
+        "sourceImageSHA256": "66eef9d1ed566267d7236be901179c2abb016170b42a59b9983ff8ff54045d81",
+        "resourceSHA256": "e4374caa590af83b015e91f415652b180e3f8decfac1ce4c8f8d06967c387458"
+      }
+    },
+    {
+      "kind": "buffs",
+      "table": "buff",
+      "row": "10245331",
+      "field": "buff_name",
+      "text_key": "15118157041630706956",
+      "name": "崩解",
+      "evidence": {
+        "method": "game-ui-description-and-exact-local-resource",
+        "sources": [
+          "https://img1.wywyx.com/uploads/allimg/250114/61-250114205I0.jpg"
+        ],
+        "note": "Game UI names the stacking effect in the matching Duanshi description. All four names reference the same six dictionary bytes; the cooldown appends the already decoded suffix. No numeric-prefix inheritance.",
+        "sourceImageSHA256": "66eef9d1ed566267d7236be901179c2abb016170b42a59b9983ff8ff54045d81",
+        "resourceSHA256": "e4374caa590af83b015e91f415652b180e3f8decfac1ce4c8f8d06967c387458"
+      }
+    },
+    {
+      "kind": "buffs",
+      "table": "buff",
+      "row": "10245332",
+      "field": "buff_name",
+      "text_key": "10131491402851051426",
+      "name": "崩解",
+      "evidence": {
+        "method": "game-ui-description-and-exact-local-resource",
+        "sources": [
+          "https://img1.wywyx.com/uploads/allimg/250114/61-250114205I0.jpg"
+        ],
+        "note": "Game UI names the stacking effect in the matching Duanshi description. All four names reference the same six dictionary bytes; the cooldown appends the already decoded suffix. No numeric-prefix inheritance.",
+        "sourceImageSHA256": "66eef9d1ed566267d7236be901179c2abb016170b42a59b9983ff8ff54045d81",
+        "resourceSHA256": "e4374caa590af83b015e91f415652b180e3f8decfac1ce4c8f8d06967c387458"
+      }
+    },
+    {
+      "kind": "buffs",
+      "table": "buff",
+      "row": "10245333",
+      "field": "buff_name",
+      "text_key": "13670192382984445622",
+      "name": "崩解调息",
+      "evidence": {
+        "method": "game-ui-description-and-exact-local-resource",
+        "sources": [
+          "https://img1.wywyx.com/uploads/allimg/250114/61-250114205I0.jpg"
+        ],
+        "note": "Game UI names the stacking effect in the matching Duanshi description. All four names reference the same six dictionary bytes; the cooldown appends the already decoded suffix. No numeric-prefix inheritance.",
+        "sourceImageSHA256": "66eef9d1ed566267d7236be901179c2abb016170b42a59b9983ff8ff54045d81",
+        "resourceSHA256": "e4374caa590af83b015e91f415652b180e3f8decfac1ce4c8f8d06967c387458"
+      }
+    }
+  ]
+}
