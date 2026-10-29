@@ -4,7 +4,7 @@ const { packager } = require('@electron/packager')
 const root = path.resolve(__dirname, '..')
 const staging = path.join(root, 'build/v04/app')
 fs.mkdirSync(path.join(staging, 'desktop'), { recursive: true })
-for (const file of ['main.cjs', 'preload.cjs', 'capture-manager.cjs']) fs.copyFileSync(path.join(root, 'desktop', file), path.join(staging, 'desktop', file))
+for (const file of ['main.cjs', 'preload.cjs', 'capture-manager.cjs', 'star-action.cjs']) fs.copyFileSync(path.join(root, 'desktop', file), path.join(staging, 'desktop', file))
 const pkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json')))
 const electronVersion = pkg.devDependencies.electron
 delete pkg.devDependencies

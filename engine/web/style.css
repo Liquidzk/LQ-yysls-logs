@@ -29,3 +29,5 @@ dialog{background:var(--panel);border:1px solid var(--line);color:var(--text);bo
 .review-details{border-top:1px solid var(--line);margin-top:18px;padding-top:14px}.review-details summary{cursor:pointer;font-size:13px}.review-details[open] summary{margin-bottom:12px}
 #dialog-body .cast-navigation{justify-content:space-between;flex-wrap:wrap}.interactive:focus-visible{outline:2px solid var(--teal);outline-offset:-2px}
 @media(max-width:760px){.cast-summary{grid-template-columns:repeat(2,minmax(0,1fr))}.cast-detail-metrics{grid-template-columns:1fr}.tabs{gap:0 16px}.catalog-summary{grid-template-columns:1fr}}
+
+.local-star{border:0;background:transparent;font-size:20px;padding:3px}.local-star[aria-pressed="true"]{color:#efd080}.local-star-filter{font-size:12px;margin-bottom:8px}

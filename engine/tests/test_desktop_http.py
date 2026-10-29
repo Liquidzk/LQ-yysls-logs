@@ -7,6 +7,7 @@ from urllib.request import Request,urlopen
 from urllib.error import HTTPError
 from desktop_server import DesktopHandler,ThreadingHTTPServer
 from library import Library
+from wire_store import WireStore
 from test_combat import fixture
 
 class DesktopHttpTests(unittest.TestCase):
@@ -14,6 +15,7 @@ class DesktopHttpTests(unittest.TestCase):
         self.tmp=tempfile.TemporaryDirectory();root=Path(self.tmp.name)
         self.lib=Library(root/'data',root/'absent');self.sid=self.lib.ingest(fixture(),'a.bin')[0]
         self.http=ThreadingHTTPServer(('127.0.0.1',0),DesktopHandler);self.http.library=self.lib
+        self.http.wire=WireStore(root/'data',root/'captures')
         self.http.kagerou_root=root/'skin';self.http.kagerou_root.mkdir()
         self.http.assets_root=root/'assets';self.http.assets_root.mkdir()
         (root/'secret.txt').write_text('outside static root')
@@ -41,5 +43,16 @@ class DesktopHttpTests(unittest.TestCase):
         with self.assertRaises(HTTPError) as error:
             self.request('/api/overlay-view',{'ids':[self.sid]}, {'X-Yanyun-Local':'1','Origin':'https://foreign.invalid'})
         self.assertEqual(error.exception.code,403)
+
+    def test_capture_starring_requires_local_origin_and_a_real_battle(self):
+        root=self.http.wire.root/'sessions/a/capture';folder=root/'battles/one';folder.mkdir(parents=True)
+        (folder/'battle.json').write_text(json.dumps({'status':'ended','clock':{'startObservedAt':'2026-01-01T00:00:00Z','endObservedAt':'2026-01-01T00:01:00Z'}}))
+        key=self.http.wire.key(folder)
+        with self.assertRaises(HTTPError) as error:
+            self.request('/api/capture/star',{'key':key,'starred':True},{'X-Yanyun-Local':'1','Origin':'https://foreign.invalid'})
+        self.assertEqual(error.exception.code,403)
+        result=json.loads(self.request('/api/capture/star',{'key':key,'starred':True}))
+        self.assertTrue(result['starred']);self.assertEqual(self.http.wire.stars.ids('capture'),{key})
+        with self.assertRaises(HTTPError):self.request('/api/capture/star',{'key':'missing','starred':True})
 
 if __name__=='__main__':unittest.main()

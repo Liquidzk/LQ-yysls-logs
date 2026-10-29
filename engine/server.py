@@ -77,6 +77,8 @@ class Handler(BaseHTTPRequestHandler):
             if length<0 or length>MAX_UPLOAD:raise ValueError('文件或请求过大（上限 64 MB）')
             raw=self.rfile.read(length)
             parsed=urlparse(self.path);path=parsed.path;q=parse_qs(parsed.query)
+            if path=='/api/star':
+                body=json.loads(raw);self.send(self.lib.set_star(body['id'],body['starred']));return
             if path=='/api/import':
                 self.send(self.lib.import_blob(raw,q.get('name',['combat.bin'])[0]));return
             body=json.loads(raw or b'{}')

@@ -59,6 +59,16 @@ class HttpTests(unittest.TestCase):
         self.assertEqual(error.exception.code,400)
         self.assertEqual(self.request('/api/sessions'),[])
 
+    def test_clv2_star_survives_reimport_and_checks_request_origin(self):
+        sid=self.request('/api/import?name=star.bin',fixture())['ids'][0]
+        self.assertTrue(self.request('/api/star',{'id':sid,'starred':True})['starred'])
+        self.request('/api/import?name=star-again.bin',fixture())
+        self.assertTrue(self.request('/api/sessions')[0]['starred'])
+        with self.assertRaises(urllib.error.HTTPError):
+            self.request('/api/star',{'id':sid,'starred':False},headers={'X-Yanyun-Local':'1','Origin':'https://other.invalid'})
+        self.assertTrue(self.request('/api/sessions')[0]['starred'])
+        self.assertFalse(self.request('/api/star',{'id':sid,'starred':False})['starred'])
+
     def test_builtin_names_scene_and_manual_override_sources(self):
         self.lib.catalog={'names':{'skills':{'100':'技能原名'},'scenes':{'140001':'雨铃客'}},
                           'provenance':{'skills':{'100':{'label':'客户端中文资源','table':'skills','field':'name'}}}}

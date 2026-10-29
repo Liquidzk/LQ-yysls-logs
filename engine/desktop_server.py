@@ -47,6 +47,18 @@ class DesktopHandler(Handler):
         super().do_GET()
 
     def do_POST(self):
+        if urlparse(self.path).path in ('/api/capture/star','/api/capture/star-latest'):
+            origin=self.headers.get('Origin')
+            if not self.valid_host() or self.headers.get('X-Yanyun-Local')!='1' or origin and origin!=f'http://127.0.0.1:{self.server.server_port}':
+                self.send({'error':'仅限本机操作'},403);return
+            try:
+                size=int(self.headers.get('Content-Length','0'))
+                if not 0<size<4096:raise ValueError('请求大小无效')
+                body=json.loads(self.rfile.read(size))
+                result=self.server.wire.star_latest() if urlparse(self.path).path.endswith('star-latest') else self.server.wire.set_star(body['key'],body['starred'])
+                self.send(result)
+            except (ValueError,OSError,KeyError,TypeError) as exc:self.send({'error':str(exc)},400)
+            return
         if urlparse(self.path).path=='/api/capture/import':
             origin=self.headers.get('Origin')
             if not self.valid_host() or self.headers.get('X-Yanyun-Local')!='1' or origin and origin!=f'http://127.0.0.1:{self.server.server_port}':

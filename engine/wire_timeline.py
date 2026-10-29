@@ -13,6 +13,26 @@ def number(value):
     return type(value) in (float, int) and math.isfinite(value)
 
 
+def boss_targets(battle, events, catalog):
+    """Only exact known Boss templates; adds and unknown NPCs stay separate."""
+    targets = {}
+    def add(row):
+        ident, template = row.get('actorHash'), row.get('npcTemplateNo')
+        meta = catalog.get('entities', {}).get(str(template))
+        if ident and meta and ':' not in ident:
+            targets[ident] = {'actorHash': ident, 'npcTemplateNo': template,
+                              'group': meta.get('group'), 'role': meta.get('role')}
+    clock, stat = battle.get('clock', {}), battle.get('statistics', {})
+    for row in (clock.get('identityContext') or {}).get('npcs', []): add(row)
+    if stat.get('encounterClock', {}).get('startObservedAt') == clock.get('startObservedAt'):
+        for row in (stat.get('bossHealth') or {}).get('rows', []): add(row)
+    for event in events:
+        if event.get('kind') == 'npc-health' and event.get('available'): add(event)
+        elif event.get('kind') == 'encounter-identity' and event.get('spaceHash') == clock.get('spaceHash'):
+            for row in event.get('npcs', []): add(row)
+    return sorted(targets.values(), key=lambda r: (str(r['group'] or r['npcTemplateNo']), r['role'] != 'body', r['actorHash']))
+
+
 def dps_curves(snapshots, start, end, window=3):
     """Uniform rate between cumulative snapshots; rolling window integral.
 

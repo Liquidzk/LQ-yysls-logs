@@ -12,6 +12,8 @@ import time
 import zipfile
 from combat import ROOT, normalize, merge_sessions, digest
 from skill_review import current_name_coverage
+from stars import Stars
+from display_names import apply_display_names
 
 DEFAULT_LOG_ROOT = ROOT.parent.parent/'yysls_medium'/'LocalData'/'ClientLocalLog'
 MAX_UPLOAD = 64 * 1024 * 1024
@@ -27,6 +29,8 @@ class Library:
         self.catalog_path=ROOT/'name_catalog.json'
         self.catalog=json.loads(self.catalog_path.read_text(encoding='utf-8')) if self.catalog_path.exists() else {}
         self.catalog_stamp=self.catalog_path.stat().st_mtime_ns if self.catalog_path.exists() else None
+        apply_display_names(self.catalog)
+        self.stars=Stars(self.data)
         self.lock=threading.RLock();self.scan_lock=threading.Lock()
         self.status={'scanning':False,'processed':0,'total':0,'last_scan':None,'last_error':None,
                      'watching':True,'log_root':str(self.log_root),'interval_seconds':10}
@@ -115,8 +119,15 @@ class Library:
             stop.wait(10)
 
     def list_sessions(self):
+        starred=self.stars.ids('clv2')
         with self.db() as c:
-            return [json.loads(r[0]) for r in c.execute('SELECT summary FROM sessions ORDER BY start DESC')]
+            rows=[json.loads(r[0]) for r in c.execute('SELECT summary FROM sessions ORDER BY start DESC')]
+        return [dict(row,starred=row['id'] in starred) for row in rows]
+
+    def set_star(self, sid, starred):
+        with self.db() as c:
+            if not c.execute('SELECT 1 FROM sessions WHERE id=?',(sid,)).fetchone():raise ValueError('战斗记录不存在')
+        return self.stars.set('clv2',sid,starred)
 
     def get(self,sid):
         if not sid.startswith('s_') or not sid[2:].isalnum() or len(sid)>50:raise ValueError('日志编号无效')
@@ -137,7 +148,7 @@ class Library:
         if stamp!=self.catalog_stamp:
             with self.lock:
                 catalog=json.loads(self.catalog_path.read_text(encoding='utf-8'))
-                self.catalog=catalog;self.catalog_stamp=stamp
+                self.catalog=apply_display_names(catalog);self.catalog_stamp=stamp
 
     def save_names(self,data):
         rows=[]

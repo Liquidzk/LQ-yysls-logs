@@ -7,7 +7,7 @@ const date = value => value ? new Date(value).toLocaleString('zh-CN', { hour12: 
 const state = { mode: 'live', tab: 'team', processes: [], sessions: [], key: null, report: null, offset: 0, actor: '', kind: 'all', search: '', busy: false, serial: 0, names: {} }
 let toastTimer
 function toast(message) { $('toast').textContent = message; $('toast').hidden = false; clearTimeout(toastTimer); toastTimer = setTimeout(() => { $('toast').hidden = true }, 6500) }
-async function api(url) { const response = await fetch(url); const data = await response.json(); if (!response.ok) throw Error(data.error || '读取失败'); return data }
+async function api(url, body) { const response = await fetch(url, body === undefined ? {} : {method:'POST',headers:{'Content-Type':'application/json','X-Yanyun-Local':'1'},body:JSON.stringify(body)}); const data = await response.json(); if (!response.ok) throw Error(data.error || '读取失败'); return data }
 function player(id) { return state.report?.identities[id] || state.report?.actors.find(a => a.idHash === id)?.name || (id ? '实体 · ' + id.slice(-6) : '未知') }
 function skill(id) { return id == null || id === '' ? '技能未记录' : state.names.skills?.[String(id)] || '技能 #' + id }
 function buff(id) { return id == null ? 'Buff 未记录' : state.names.buffs?.[String(id)] || 'Buff #' + id }
@@ -40,9 +40,30 @@ $('refresh-records').onclick = () => list().catch(e => toast(e.message))
 async function list() {
   state.sessions = await api('/api/capture/sessions')
   state.sessions.forEach(s => { s.title = title(s) })
-  $('session-list').innerHTML = state.sessions.map(s => `<button class="session ${state.key === s.key ? 'active' : ''}" data-key="${s.key}"><b>${esc(s.title)}</b><small>${esc(date(s.startedAt))}</small><small>${s.kind === 'battle' ? '已分段战斗' : '包含全部观测'} · ${s.mode === 'replay' ? '历史回放' : '捕获记录'}</small></button>`).join('') || '<p class="empty-small">暂无捕获记录。开始采集或解析已有捕获目录。</p>'
-  document.querySelectorAll('[data-key]').forEach(b => { b.onclick = () => { state.key = b.dataset.key; state.offset = 0; mode('archive'); load().catch(e => toast(e.message)); list().catch(() => {}) } })
+  renderRecords()
 }
+function renderRecords() {
+  const rows = state.sessions.filter(s => !$('stars-only').checked || s.starred)
+  $('session-list').innerHTML = rows.map(s => `<div class="session-entry"><button class="session ${state.key === s.key ? 'active' : ''}" data-key="${s.key}"><b>${esc(s.title)}</b><small>${esc(date(s.startedAt))}</small><small>${s.kind === 'battle' ? '已分段战斗' : '包含全部观测'} · ${s.mode === 'replay' ? '历史回放' : '捕获记录'}</small></button>${s.kind === 'battle' ? `<button class="record-star" data-star="${s.key}" aria-pressed="${!!s.starred}" aria-label="${s.starred?'取消收藏':'收藏战斗'}" title="${s.starred?'取消收藏':'收藏战斗'}">${s.starred?'★':'☆'}</button>` : ''}</div>`).join('') || '<p class="empty-small">' + ($('stars-only').checked ? '还没有收藏的战斗。' : '暂无捕获记录。开始采集或解析已有捕获目录。') + '</p>'
+  document.querySelectorAll('[data-key]').forEach(b => { b.onclick = () => { state.key = b.dataset.key; state.offset = 0; mode('archive'); load().catch(e => toast(e.message)); renderRecords() } })
+  document.querySelectorAll('[data-star]').forEach(b => { b.onclick = () => { b.disabled=true; starRecord(b.dataset.star).catch(e=>{toast(e.message);b.disabled=false}) } })
+  updateStar()
+}
+function updateStar() {
+  const s = state.sessions.find(s => s.key === state.key)
+  $('star-current').hidden = s?.kind !== 'battle'
+  $('star-current').textContent = s?.starred ? '★ 已收藏' : '☆ 收藏战斗'
+  $('star-current').setAttribute('aria-pressed', String(!!s?.starred))
+}
+async function starRecord(key) {
+  const s = state.sessions.find(s => s.key === key)
+  const result = await api('/api/capture/star', {key,starred:!s?.starred})
+  await list(); toast(result.starred ? '已收藏战斗' : '已取消收藏')
+}
+$('stars-only').onchange = renderRecords
+$('star-current').onclick = () => starRecord(state.key).catch(e=>toast(e.message))
+desktop?.onRecordsChanged?.(result => { list().catch(e=>toast(e.message)); if(result.ok)toast('★ 最近结束的战斗已收藏') })
+
 async function load() {
   if (!state.key) return
   const serial = ++state.serial
@@ -53,6 +74,7 @@ async function load() {
 }
 function render() {
   const r = state.report; if (!r) return
+  updateStar()
   document.querySelector('.chart-panel').hidden = state.tab === 'timeline'
   if (state.tab === 'timeline') window.WireTimeline.show(r, state.names, key => { state.key = key; mode('archive'); load().catch(e => toast(e.message)); list().catch(() => {}) }).catch(e => toast(e.message))
   $('empty').hidden = true; $('review').hidden = false

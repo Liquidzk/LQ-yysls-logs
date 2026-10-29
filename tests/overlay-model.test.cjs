@@ -4,6 +4,15 @@ test('new overlay preserves unknown versus measured zero', () => {
   assert.deepEqual(model.ranked([{ damage: null }, { damage: 0 }, { damage: 10 }], 'damage').map(r => r.damage), [10, 0, null])
   assert.equal(model.number(null), '—'); assert.equal(model.number(0), '0')
 })
+
+test('Boss labels switch percent, full values and ten-thousands without hiding zero', () => {
+  const hp = { available: true, currentHp: 125000, maxHp: 1000000 }
+  assert.equal(model.bossAmount(hp), '12.5%')
+  assert.equal(model.bossAmount(hp, 'value'), '125,000 / 1,000,000')
+  assert.equal(model.bossAmount(hp, 'value', 'wan'), '12.5 / 100 万')
+  assert.equal(model.bossAmount({...hp,currentHp:0}, 'value', 'wan'), '0 / 100 万')
+  assert.equal(model.bossAmount({...hp,available:false}, 'value'), '等待血量快照')
+})
 test('missing duration never manufactures live DPS', () => {
   const v = model.live({ latest: { actors: [{ idHash: 'abc', damage: 100 }], timeCostSeconds: 0 } }, true)
   assert.equal(v.rows[0].dps, null)

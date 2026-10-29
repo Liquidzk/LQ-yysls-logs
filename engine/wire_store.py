@@ -7,6 +7,7 @@ import sqlite3
 import threading
 from datetime import datetime, timezone
 from wire_ledger import ledger_path, fingerprint, iter_records, LedgerReader
+from stars import Stars
 
 
 def read_json(path, default=None):
@@ -48,6 +49,7 @@ class WireStore:
         self.data.mkdir(parents=True, exist_ok=True)
         self.root.mkdir(parents=True, exist_ok=True)
         self.registry = self.data / 'capture-sources.json'
+        self.stars = Stars(self.data)
         # v1 remains available to older clients; v2 never stores event JSON twice.
         self.dbpath = self.data / 'capture-index-v2.sqlite3'
         self.lock = threading.RLock()
@@ -151,18 +153,43 @@ class WireStore:
 
     def list(self):
         result = []
+        starred = self.stars.ids('capture')
         for e in self.entries():
             b, last = e['battle'], e['latest']
             clock = (b or {}).get('clock', {})
             npc = (b or {}).get('statistics', {}).get('npcNo') or last.get('npcNo')
             templates = {n.get('npcTemplateNo') for n in (clock.get('identityContext') or {}).get('npcs', []) if n.get('npcTemplateNo')}
             result.append({'key': e['key'], 'parentKey': self.key(e['root']), 'kind': 'battle' if b else 'session',
+                           'starred': e['key'] in starred,
                            'title': ('战斗' if b else '完整采集会话') + ' · ' + str(npc or '等待目标'), 'npcNo': npc,
                            'npcTemplateNo': next(iter(templates)) if len(templates) == 1 else None,
                            'startedAt': clock.get('startObservedAt') or (read_json(e['root'] / 'manifest.json', {}) or {}).get('startedAt') or last.get('observedAt'),
                            'endedAt': clock.get('endObservedAt'), 'mode': last.get('source', {}).get('mode', 'unknown'),
                            'status': (b or {}).get('status') or last.get('health', {}).get('status', 'unknown')})
         return sorted(result, key=lambda x: x['startedAt'] or '', reverse=True)
+
+    def set_star(self, key, starred):
+        entry = self.find(key)
+        if not entry['battle']: raise ValueError('请选择一场分段战斗进行收藏')
+        return self.stars.set('capture', key, starred)
+
+    def star_latest(self):
+        status = self.status()
+        if not status['control'].get('binding') or not status['key']:
+            raise ValueError('当前没有已绑定的采集会话，请在战斗记录中手动收藏')
+        entries = [e for e in self.entries() if e['battle'] and self.key(e['root']) == status['key']]
+        timer = status['latest'].get('battleTimer') or {}
+        # Never star the preceding fight while the just-ended archive is being
+        # published. A terminal timer identifies the exact expected attempt.
+        if timer.get('phase') in ('ended', 'finalized', 'interrupted') and timer.get('startObservedAt'):
+            entries = [e for e in entries if e['battle'].get('clock', {}).get('startObservedAt') == timer['startObservedAt']]
+        entries = [e for e in entries if e['battle'].get('status') in ('ended', 'interrupted')
+                   and timestamp(e['battle'].get('clock', {}).get('endObservedAt')) is not None
+                   and not e['battle'].get('clock', {}).get('endIncomplete')]
+        if not entries: raise ValueError('当前会话尚无已结束并保存的战斗，请稍后再试')
+        entry = max(entries, key=lambda e: timestamp(e['battle']['clock']['endObservedAt']))
+        return dict(self.stars.set('capture', entry['key'], True),
+                    endedAt=entry['battle']['clock']['endObservedAt'])
 
     def status(self):
         control = read_json(self.root / 'control.json', {}) or {}
@@ -244,7 +271,8 @@ class WireStore:
         return more, errors
 
     def timeline(self, key, window=3):
-        from wire_timeline import dps_curves, buff_intervals, action_rows, action_timing
+        from wire_timeline import dps_curves, buff_intervals, action_rows, action_timing, boss_targets
+        from combat import ROOT
         entry = self.find(key)
         if not entry['battle']:
             return {'requiresBattle': True, 'key': key, 'battles': [x for x in self.list() if x['kind'] == 'battle' and x['parentKey'] == key]}
@@ -272,6 +300,9 @@ class WireStore:
             snapshots = [s for s in snapshots if not s.get('encounterClock', {}).get('startObservedAt') or s['encounterClock']['startObservedAt'] == clock['startObservedAt']]
             buffs = [reader.event(r) for r in db.execute("SELECT * FROM events WHERE root=? AND kind='buff' AND ts<=? ORDER BY ts,transport,CASE WHEN invalidation=1 THEN 0 ELSE 1 END,stream,ordinal", (root_key, upper))]
             actions = [(r['kind'], reader.event(r)) for r in db.execute("SELECT * FROM events WHERE root=? AND ((kind='action' AND ts<=?) OR (kind='hit' AND ts>=? AND ts<=?)) ORDER BY ts,transport,stream,ordinal", (root_key, upper, lower, upper))]
+            boundaries = (reader.event(r) for r in db.execute("SELECT * FROM events WHERE root=? AND kind='boundary' AND ts>=? AND ts<=? ORDER BY ts,ordinal", (root_key, lower, upper)))
+            catalog = read_json(ROOT / 'boss-entities.json', None) or read_json(ROOT.parent / 'collector/config/boss-entities.json', {})
+            bosses = boss_targets(battle, boundaries, catalog)
             settlement = None
             for row in db.execute("SELECT * FROM events WHERE root=? AND kind='settlement' AND ts>=? AND ts<=? ORDER BY ts,ordinal", (root_key, upper, upper + 5)):
                 detail = reader.event(row)
@@ -290,6 +321,7 @@ class WireStore:
                   'serverDuration': final.get('timeCostSeconds') or None,
                   'dps': dps_curves(snapshots, lower, upper, window),
                   'buffs': buff_intervals(buffs, lower, upper), 'actions': action_rows(actions, lower, upper),
+                  'bossTargets': bosses,
                   'actionTiming': action_timing(actions, lower, upper),
                   'indexing': more, 'skippedRows': errors,
                   'notice': ('结束边界缺失，范围只到本段最后观测，不代表完整战斗时长。' if clock.get('endIncomplete') else '') + '横轴为本机接收时间，结算时长单独显示。Buff 为观测覆盖：条纹表示起止不完整；未观测到不等于没有。'}

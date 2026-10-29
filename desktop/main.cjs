@@ -5,6 +5,7 @@ const path = require('node:path')
 const { spawn } = require('node:child_process')
 const readline = require('node:readline')
 const { CaptureManager } = require('./capture-manager.cjs')
+const { createStarAction } = require('./star-action.cjs')
 const ROOT = path.resolve(__dirname, '..')
 app.setName('LQ 燕云 Logs')
 const qaIndex = process.argv.indexOf('--validation-data')
@@ -12,6 +13,7 @@ const qaRoot = qaIndex > 0 && process.argv[qaIndex + 1] ? path.resolve(process.a
 if (qaRoot) { fs.mkdirSync(path.join(qaRoot, 'preferences'), { recursive: true }); app.setPath('userData', path.join(qaRoot, 'preferences')) }
 let main, overlay, tray, engine, captureManager, origin, quitting = false, settings, preferenceFile
 let overlaySource = 'live', overlayLocked = false
+let starShortcut = false
 const preferenceKeys = ['yanyun-last-review', 'yanyun-review-view', 'yanyun-overlay-v2']
 const readJson = (file, fallback) => { try { return JSON.parse(fs.readFileSync(file, 'utf8').replace(/^\uFEFF/, '')) } catch { return fallback } }
 const writeJson = (file, value) => { fs.mkdirSync(path.dirname(file), { recursive: true }); fs.writeFileSync(file + '.tmp', JSON.stringify(value)); fs.renameSync(file + '.tmp', file) }
@@ -68,6 +70,19 @@ function toggleLock() {
   overlayLocked = !overlayLocked
   if (overlay && !overlay.isDestroyed()) { overlay.setIgnoreMouseEvents(overlayLocked, { forward: true }); overlay.webContents.send('overlay:state', { source: overlaySource, locked: overlayLocked }) }
 }
+const starLatest = createStarAction({
+  isVisible: () => overlay && !overlay.isDestroyed() && overlay.isVisible(),
+  source: () => overlaySource,
+  save: async () => {
+    const response = await fetch(origin + '/api/capture/star-latest', { method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Yanyun-Local': '1' }, body: '{}' })
+    const result = await response.json()
+    if (!response.ok) throw Error(result.error || '收藏失败')
+    return result
+  },
+  changed: result => main?.webContents.send('records:changed', result),
+  feedback: result => { if (overlay && !overlay.isDestroyed()) overlay.webContents.send('star:result', result) }
+})
 
 async function start() {
   const localFile = path.join(app.isPackaged ? path.dirname(process.execPath) : ROOT, 'desktop.local.json')
@@ -127,7 +142,8 @@ async function start() {
     const data = await response.json(); if (!response.ok) throw Error(data.error); return data
   })
   ipcMain.handle('capture:folder', event => { if (trusted(event)) return shell.openPath(captureRoot) })
-  ipcMain.handle('overlay:state', event => trusted(event) ? { source: overlaySource, locked: overlayLocked } : {})
+  ipcMain.handle('overlay:state', event => trusted(event) ? { source: overlaySource, locked: overlayLocked, starShortcut } : {})
+  ipcMain.handle('capture:star-latest', event => { if (trusted(event)) return starLatest() })
   ipcMain.on('overlay:command', (event, action) => {
     if (!trusted(event)) return
     if (action === 'lock') toggleLock()
@@ -172,6 +188,7 @@ async function start() {
   engine.on('exit', () => { if (!quitting) dialog.showMessageBox(main, { type: 'error', message: '归档引擎已停止。请重启客户端；已有日志保留。' }) })
   globalShortcut.register('CommandOrControl+Shift+F8', toggleLock)
   globalShortcut.register('CommandOrControl+Shift+F9', () => { if (overlay && !overlay.isDestroyed() && overlay.isVisible()) overlay.hide(); else openOverlay() })
+  starShortcut = globalShortcut.register('CommandOrControl+Shift+F10', starLatest)
   await main.loadURL(origin + '/')
 }
 app.on('before-quit', event => {

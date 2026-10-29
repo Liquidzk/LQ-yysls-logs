@@ -2,3 +2,5 @@
 .tl-lane.tl-axis svg,#tl-actions .tl-lane.tl-axis svg{height:24px;background:transparent}.tl-axis{position:sticky;top:0;background:var(--bg);z-index:1;padding:3px 0}
 
 .tl-action-summary{display:flex;gap:10px;flex-wrap:wrap;margin:12px 0}.tl-action-summary>div{display:grid;gap:5px;padding:10px 14px;border:1px solid var(--line);border-radius:7px;background:var(--panel);font-size:12px}.tl-action-summary span{color:var(--muted)}#tl-order-rows small{display:block;color:var(--muted)}#tl-order-rows td{font-variant-numeric:tabular-nums}#tl-gap-min{width:100px}
+
+#tl-boss-buffs{max-height:360px;overflow:auto}#tl-boss-buffs .tl-axis{position:sticky;top:0;z-index:1;background:var(--panel,#132020)}

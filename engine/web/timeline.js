@@ -6,8 +6,11 @@ window.WireTimeline = (() => {
   const clock = t => `${Math.floor(t / 60).toString().padStart(2, '0')}:${(t % 60).toFixed(1).padStart(4, '0')}`
   const colors = ['#ad9bd3','#82b99d','#80accd','#d3ba71','#c68ea7','#82bbb5','#d49370']
   let report, names = {}, data, key, actor = '', from = 0, to = 1, ticket = 0, fetchStamp, chooseBattle
+  const defaultBuffs = ['1058032', '98752', '10245332']
+  let bossActor = ''
   let selected = new Set(), initialized = false, hoverPoints = [], orderPage = 0
-  const person = id => report?.identities?.[id] || report?.actors?.find(a => a.idHash === id)?.name || (id ? '实体 · ' + id.slice(-6) : '来源未知')
+  const bossName = r => r.group === 'choulingke' ? '愁铃客 · ' + (r.role === 'body' ? '肉体' : '灵魂') : names.npcs?.[String(r.npcTemplateNo)] || 'Boss #' + r.npcTemplateNo
+  const person = id => data?.bossTargets?.find(r => r.actorHash === id) ? bossName(data.bossTargets.find(r => r.actorHash === id)) : report?.identities?.[id] || report?.actors?.find(a => a.idHash === id)?.name || (id ? '实体 · ' + id.slice(-6) : '来源未知')
   const buff = id => names.buffs?.[id] || `Buff #${id}`
   const skill = id => names.skills?.[id] || (id == null || Number(id) <= 0 ? '技能编号未下发' : `技能 #${id}`)
   const x = t => Math.max(0, Math.min(1000, (t - from) / Math.max(.001, to - from) * 1000))
@@ -29,6 +32,8 @@ window.WireTimeline = (() => {
       from = a; to = Math.min(data.duration, b); render()
     }
     $('tl-reset').onclick = () => { from = 0; to = data.duration; render() }
+    $('tl-boss').onchange = () => { bossActor = $('tl-boss').value; bossLanes() }
+    $('tl-boss-search').oninput = bossLanes
     $('tl-buff-search').oninput = picker
     $('tl-buff-clear').onclick = () => { selected.clear(); picker(); buffLanes() }
     $('tl-action-kind').onchange = actionLanes
@@ -64,10 +69,7 @@ window.WireTimeline = (() => {
     }
     if (key !== r.key) {
       key = r.key; actor = ''; from = 0; to = result.duration; selected = new Set()
-      const totals = new Map()
-      const roster = new Set(r.actors.map(a => a.idHash))
-      for (const lane of result.buffs) if (roster.has(lane.actor)) totals.set(lane.buffId, (totals.get(lane.buffId) || 0) + lane.coveredSeconds)
-      selected = new Set([...totals].sort((a,b) => Number(!!names.buffs?.[b[0]]) - Number(!!names.buffs?.[a[0]]) || b[1]-a[1]).slice(0,6).map(([id]) => id))
+      selected = new Set(defaultBuffs); bossActor = ''; $('tl-boss-search').value = ''
     }
     data = result; $('tl-pick').hidden = true; $('tl-body').hidden = false
     render()
@@ -81,7 +83,7 @@ window.WireTimeline = (() => {
     to = Math.min(to || data.duration, data.duration); $('tl-from').value = from.toFixed(1); $('tl-to').value = to.toFixed(1)
     $('tl-state').textContent = data.indexing ? '正在补建索引，刷新后可看到余下记录' : `全场 ${clock(data.duration)}${data.serverDuration ? ' · 服务器结算 ' + clock(data.serverDuration) : ''}`
     $('tl-notice').textContent = data.notice
-    drawDps(); picker(); buffLanes(); actionLanes()
+    drawDps(); picker(); buffLanes(); bossLanes(); actionLanes()
   }
   function drawDps() {
     const curve = data.dps
@@ -113,16 +115,29 @@ window.WireTimeline = (() => {
     const roster = new Set(report.actors.map(a => a.idHash))
     const lanes = data.buffs.filter(l => selected.has(l.buffId) && (actor ? l.actor === actor : roster.has(l.actor)))
     lanes.sort((a,b) => buff(a.buffId).localeCompare(buff(b.buffId),'zh-CN') || person(a.actor).localeCompare(person(b.actor),'zh-CN'))
-    $('tl-buffs').innerHTML = axis() + (lanes.map((lane,index) => {
+    drawBuffLanes('tl-buffs', lanes)
+  }
+  function bossLanes() {
+    const targets = data.bossTargets || [], ids = new Set(targets.map(r => r.actorHash))
+    if (!ids.has(bossActor)) bossActor = ''
+    $('tl-boss').innerHTML = '<option value="">全部 Boss</option>' + targets.map(r => `<option value="${esc(r.actorHash)}">${esc(bossName(r))}</option>`).join('')
+    $('tl-boss').value = bossActor
+    const query = $('tl-boss-search').value.trim().toLowerCase()
+    const lanes = data.buffs.filter(l => ids.has(l.actor) && (!bossActor || l.actor === bossActor) && `${buff(l.buffId)} ${l.buffId}`.toLowerCase().includes(query))
+    lanes.sort((a,b) => person(a.actor).localeCompare(person(b.actor),'zh-CN') || buff(a.buffId).localeCompare(buff(b.buffId),'zh-CN'))
+    drawBuffLanes('tl-boss-buffs', lanes, '此筛选范围内尚无 Boss Buff／Debuff 观测；未观测到不表示没有。')
+  }
+  function drawBuffLanes(container, lanes, empty = '请选择 Buff；没有观测记录不能视为零覆盖。') {
+    $(container).innerHTML = axis() + (lanes.map((lane,index) => {
       const coverage = lane.union.reduce((sum,[a,b]) => sum + Math.max(0,Math.min(to,b)-Math.max(from,a)),0) / Math.max(.001,to-from)
       const intervals = lane.intervals.filter(i => i.end > from && i.start < to)
       const rects = intervals.map((v,i) => {
         const title = `${buff(lane.buffId)} #${lane.buffId}\n${person(lane.actor)} ← ${person(v.source)}\n${clock(v.start)} — ${clock(v.end)} · 层数 ${v.stacks ?? '未知'}\n${v.leftUnknown?'开始前状态不完整；':''}${v.rightUnknown?'结束点未观测到；':''}${v.visibility}`
-        return `<g data-interval="${i}" tabindex="0" role="button" aria-label="${esc(title)}"><rect x="${x(v.start)}" y="4" width="${Math.max(.8,x(v.end)-x(v.start))}" height="22" fill="${color(lane.buffId)}"/><rect x="${x(v.start)}" y="4" width="${Math.max(.8,x(v.end)-x(v.start))}" height="22" fill="${v.leftUnknown||v.rightUnknown?'url(#hatch-'+index+')':'transparent'}"/><title>${esc(title)}</title></g>`
+        return `<g data-interval="${i}" tabindex="0" role="button" aria-label="${esc(title)}"><rect x="${x(v.start)}" y="4" width="${Math.max(.8,x(v.end)-x(v.start))}" height="22" fill="${color(lane.buffId)}"/><rect x="${x(v.start)}" y="4" width="${Math.max(.8,x(v.end)-x(v.start))}" height="22" fill="${v.leftUnknown||v.rightUnknown?'url(#'+container+'-hatch-'+index+')':'transparent'}"/><title>${esc(title)}</title></g>`
       }).join('')
-      return `<div class="tl-lane" data-buff-lane="${index}"><div class="tl-lane-name" title="${esc(buff(lane.buffId)+' #'+lane.buffId)}"><b style="color:${color(lane.buffId)}">${esc(buff(lane.buffId))}</b><small>${esc(person(lane.actor))}</small></div><svg viewBox="0 0 1000 30" preserveAspectRatio="none" aria-label="${esc(buff(lane.buffId))} 覆盖"><defs><pattern id="hatch-${index}" width="10" height="10" patternUnits="userSpaceOnUse"><path d="M0 10L10 0" stroke="#101719" stroke-width="3" opacity=".35"/></pattern></defs>${grid(30)}${rects}</svg><span class="tl-percent" title="当前所选时间范围的观测覆盖；重叠实例只计算一次">${(coverage*100).toFixed(1)}%</span></div>`
-    }).join('') || '<p class="tl-empty">请选择 Buff；没有观测记录不能视为零覆盖。</p>')
-    $('tl-buffs').querySelectorAll('[data-buff-lane]').forEach(row => {
+      return `<div class="tl-lane" data-buff-lane="${index}"><div class="tl-lane-name" title="${esc(buff(lane.buffId)+' #'+lane.buffId)}"><b style="color:${color(lane.buffId)}">${esc(buff(lane.buffId))}</b><small>${esc(person(lane.actor))}</small></div><svg viewBox="0 0 1000 30" preserveAspectRatio="none" aria-label="${esc(buff(lane.buffId))} 覆盖"><defs><pattern id="${container}-hatch-${index}" width="10" height="10" patternUnits="userSpaceOnUse"><path d="M0 10L10 0" stroke="#101719" stroke-width="3" opacity=".35"/></pattern></defs>${grid(30)}${rects}</svg><span class="tl-percent" title="当前所选时间范围的观测覆盖；重叠实例只计算一次">${(coverage*100).toFixed(1)}%</span></div>`
+    }).join('') || `<p class="tl-empty">${esc(empty)}</p>`)
+    $(container).querySelectorAll('[data-buff-lane]').forEach(row => {
       const lane=lanes[Number(row.dataset.buffLane)], intervals=lane.intervals.filter(i=>i.end>from&&i.start<to)
       row.querySelectorAll('[data-interval]').forEach(el => {
         const open=()=>{const v=intervals[Number(el.dataset.interval)];detail(`${buff(lane.buffId)} #${lane.buffId}`, [`${person(lane.actor)} ← ${person(v.source)}`,`${clock(v.start)} — ${clock(v.end)} · 层数 ${v.stacks ?? '未知'}`,v.leftUnknown||v.rightUnknown?'这是起止不完整的观测区间，条纹不是已确认的完整覆盖。':'添加与移除通知之间的观测区间。'])}
