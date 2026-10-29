@@ -34,6 +34,46 @@ class WireStoreTests(unittest.TestCase):
         self.assertEqual(r['counts']['hit'], 1)
         self.assertEqual(r['events'][0]['data']['amount'], 40)
 
+    def test_empty_initialization_is_hidden_but_live_record_stays_reachable(self):
+        root = self.store.root / 'sessions' / 'empty' / 'capture'; root.mkdir(parents=True)
+        latest = {'observedAt': None, 'actors': [], 'npcNo': None, 'publishedAt': '2026-01-02T00:00:00Z'}
+        (root / 'latest.json').write_text(json.dumps(latest))
+        (root / 'manifest.json').write_text('{"startedAt":"2026-01-02T00:00:00Z"}')
+        (root / 'identities.json').write_text('{"a":{"name":"Cached"}}')
+        (root / 'transport.private.tsv').write_text('raw capture is not a parsed event')
+        (root / 'statistics.jsonl.ylz').touch()
+        key = self.store.key(root)
+        before = {p.name: p.read_bytes() for p in root.iterdir()}
+        self.assertNotIn(key, [r['key'] for r in self.store.list()])
+        self.assertEqual(self.store.find(key)['root'], root.resolve())
+        self.assertEqual({p.name: p.read_bytes() for p in root.iterdir()}, before)
+        # Empty metadata must not permanently hide a session once data arrives.
+        (root / 'action-events.jsonl').write_text('{"observedAt":"2026-01-02T00:00:01Z","actorHash":"a"}\n')
+        self.assertEqual(next(r for r in self.store.list() if r['key'] == key)['title'], '完整采集会话 · 未分段观测')
+
+    def test_session_title_uses_battle_count_even_after_target_is_reset(self):
+        (self.root / 'latest.json').write_text(json.dumps(dict(self.stat, npcNo=0)))
+        for name in ('first', 'second'):
+            folder = self.root / 'battles' / name; folder.mkdir(parents=True)
+            (folder / 'battle.json').write_text(json.dumps({'clock': {'startObservedAt': self.stat['observedAt']}}))
+        rows = self.store.list()
+        parent = next(r for r in rows if r['key'] == self.key)
+        self.assertEqual(parent['battleCount'], 2)
+        self.assertEqual(parent['title'], '完整采集会话 · 包含 2 场战斗')
+        self.assertEqual(sum(r['kind'] == 'battle' for r in rows), 2)
+
+    def test_nonempty_compressed_and_snapshot_only_imports_are_not_hidden(self):
+        import struct, zlib
+        root = self.store.root / 'sessions' / 'compressed' / 'capture'; root.mkdir(parents=True)
+        row = b'{"observedAt":"2026-01-02T00:00:01Z","buffNo":98752}\n'
+        packed = zlib.compress(row)
+        (root / 'buff-events.jsonl.ylz').write_bytes(struct.pack('<4sII', b'YLZ1', len(packed), len(row)) + packed)
+        snap = self.store.root / 'sessions' / 'snapshot' / 'capture'; snap.mkdir(parents=True)
+        (snap / 'latest.json').write_text(json.dumps(self.stat))
+        keys = {r['key'] for r in self.store.list()}
+        self.assertIn(self.store.key(root), keys)
+        self.assertIn(self.store.key(snap), keys)
+
     def test_anchored_final_settlement_keeps_members_missing_from_idle_counters(self):
         clock={'startObservedAt':'2026-01-01T00:00:05Z','endObservedAt':'2026-01-01T00:00:10Z'}
         folder=self.root/'battles'/'settled';folder.mkdir(parents=True)

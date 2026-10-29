@@ -11,7 +11,7 @@ async function api(url, body) { const response = await fetch(url, body === undef
 function player(id) { return state.report?.identities[id] || state.report?.actors.find(a => a.idHash === id)?.name || (id ? '实体 · ' + id.slice(-6) : '未知') }
 function skill(id) { return id == null || id === '' ? '技能未记录' : state.names.skills?.[String(id)] || '技能 #' + id }
 function buff(id) { return id == null ? 'Buff 未记录' : state.names.buffs?.[String(id)] || 'Buff #' + id }
-function title(s) { return s?.npcTemplateNo && state.names.npcs?.[String(s.npcTemplateNo)] ? (s.kind === 'battle' ? '战斗 · ' : '采集会话 · ') + state.names.npcs[String(s.npcTemplateNo)] : s?.title || '当前采集会话' }
+function title(s) { return s?.kind === 'battle' && s.npcTemplateNo && state.names.npcs?.[String(s.npcTemplateNo)] ? '战斗 · ' + state.names.npcs[String(s.npcTemplateNo)] : s?.title || '当前采集会话' }
 function mode(value) { state.serial++; state.mode = value; $('binding-panel').hidden = value !== 'live'; document.querySelectorAll('[data-mode]').forEach(b => b.classList.toggle('selected', b.dataset.mode === value)) }
 document.querySelectorAll('[data-mode]').forEach(b => { b.onclick = () => { mode(b.dataset.mode); refresh().catch(e => toast(e.message)) } })
 async function processes() {
@@ -137,7 +137,7 @@ async function refresh() {
     $('status-detail').textContent = running ? data.service.detail || (data.control.binding ? '绑定 PID ' + data.control.binding.pid : '') : '手动选择进程后开始；历史记录已保留'
     $('status-dot').classList.toggle('active', !!running && data.health.session === 'valid' && !data.health.stale)
     $('stop').disabled = !running; $('start').disabled = !!running || $('process').value === ''; $('process').disabled = !!running
-    if (state.mode === 'live' && data.key) { state.key = data.key; await load() }
+    if (state.mode === 'live' && data.control.binding && data.key) { state.key = data.key; await load() }
     else if (state.mode === 'live') { state.serial++; state.key = null; state.report = null; $('empty').hidden = false; $('review').hidden = true }
   } finally { state.busy = false }
 }

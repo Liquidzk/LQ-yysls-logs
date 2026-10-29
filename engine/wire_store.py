@@ -105,13 +105,15 @@ class WireStore:
             latest = read_json(root / 'latest.json', {}) or {}
             battles = sorted(root.glob('battles/*/battle.json'))
             # Keep the whole session available even when encounter boundaries are incomplete.
-            out.append({'key': self.key(root), 'root': root, 'path': root, 'battle': None, 'latest': latest})
+            session = {'key': self.key(root), 'root': root, 'path': root, 'battle': None, 'latest': latest, 'battleCount': 0}
+            out.append(session)
             decoded = [(file, read_json(file, {}) or {}) for file in battles]
             decoded.sort(key=lambda item: item[1].get('clock', {}).get('startObservedAt') or '')
             closed = (root / 'completion.json').is_file() or last_terminal(latest)
             for index, (file, battle) in enumerate(decoded):
                 battle = self.battle_view(battle, superseded=index + 1 < len(decoded), closed=closed)
                 if battle.get('clock', {}).get('startObservedAt'):
+                    session['battleCount'] += 1
                     out.append({'key': self.key(file.parent), 'root': root, 'path': file.parent, 'battle': battle, 'latest': latest})
         return out
 
@@ -156,17 +158,39 @@ class WireStore:
         starred = self.stars.ids('capture')
         for e in self.entries():
             b, last = e['battle'], e['latest']
+            # Initialization creates metadata and copies cached identities before
+            # any observation arrives. Keep it reachable for the live status,
+            # but do not advertise an empty attempt as a saved combat record.
+            count = e.get('battleCount', 0)
+            if not b and not count and not self.has_observations(e['root'], last):
+                continue
             clock = (b or {}).get('clock', {})
             npc = (b or {}).get('statistics', {}).get('npcNo') or last.get('npcNo')
             templates = {n.get('npcTemplateNo') for n in (clock.get('identityContext') or {}).get('npcs', []) if n.get('npcTemplateNo')}
             result.append({'key': e['key'], 'parentKey': self.key(e['root']), 'kind': 'battle' if b else 'session',
                            'starred': e['key'] in starred,
-                           'title': ('战斗' if b else '完整采集会话') + ' · ' + str(npc or '等待目标'), 'npcNo': npc,
+                           'title': ('战斗 · ' + str(npc or '目标未识别')) if b else
+                                    ('完整采集会话 · 包含 ' + str(count) + ' 场战斗' if count else '完整采集会话 · 未分段观测'),
+                           'battleCount': count if not b else None, 'npcNo': npc,
                            'npcTemplateNo': next(iter(templates)) if len(templates) == 1 else None,
                            'startedAt': clock.get('startObservedAt') or (read_json(e['root'] / 'manifest.json', {}) or {}).get('startedAt') or last.get('observedAt'),
                            'endedAt': clock.get('endObservedAt'), 'mode': last.get('source', {}).get('mode', 'unknown'),
                            'status': (b or {}).get('status') or last.get('health', {}).get('status', 'unknown')})
         return sorted(result, key=lambda x: x['startedAt'] or '', reverse=True)
+
+    @classmethod
+    def has_observations(cls, root, latest):
+        # Some imported sessions retain only a real server snapshot. Neither a
+        # publication timestamp nor cached identities prove a new observation.
+        if timestamp(latest.get('observedAt')) is not None:
+            return True
+        for name in cls.streams:
+            try:
+                if ledger_path(root, name).stat().st_size > 0:
+                    return True
+            except FileNotFoundError:
+                pass
+        return False
 
     def set_star(self, key, starred):
         entry = self.find(key)
