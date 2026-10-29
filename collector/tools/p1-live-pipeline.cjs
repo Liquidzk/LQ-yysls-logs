@@ -29,7 +29,7 @@ const sessionId = hash(Buffer.from(JSON.stringify([c.pid, c.processStartUtc, c.f
 const source = { mode, sessionId }, ledger = new LedgerWriter(), publisher = new SnapshotPublisher()
 const battleTimer = new BattleTimer(sessionId)
 const bossHealth = new BossHealth()
-const archive = new BattleArchive(out, source), identities = new Map()
+const archive = new BattleArchive(out, source, ledger), identities = new Map()
 if (c.identityCacheFile && fs.existsSync(c.identityCacheFile) && fs.statSync(c.identityCacheFile).size <= 2 * 1024 * 1024) {
   try { for (const row of JSON.parse(fs.readFileSync(c.identityCacheFile)).names || []) if (validIdentity(row)) identities.set(row.idHash, { ...row, cached: true }) } catch {}
 }
@@ -47,7 +47,8 @@ let stopped = false, failing = false, capture, watcher, tick, pumpTimer, startTi
 let rawFd = null, rawReadFd = null, rawOffset = 0, rawSize = 0, rawPending = '', nextJob = 0, lastPublish = 0, publishTimer = null
 const pending = new Map()
 fs.writeFileSync(path.join(out, 'manifest.json'), JSON.stringify({ schemaVersion: 1, source, startedAt: new Date().toISOString(),
-  mode, sessionId, configSha256: hash(fs.readFileSync(configPath)), pid: c.pid, processStartUtc: c.processStartUtc,
+  mode, sessionId, eventStorage: { format: 'YLZ1', compression: 'zlib', blockBytes: 262144, flushMilliseconds: 500 },
+  configSha256: hash(fs.readFileSync(configPath)), pid: c.pid, processStartUtc: c.processStartUtc,
   limits: ['Only messages delivered to this client are visible.', 'Notification times are packet reception times.',
     'Cumulative counters are not summed with per-hit notifications.', 'Complete teammate casts/private buffs and rDPS remain unverified.'] }, null, 2))
 function syncClock() {

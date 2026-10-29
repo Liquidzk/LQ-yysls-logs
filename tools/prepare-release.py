@@ -41,7 +41,7 @@ def public_files(build):
         parts = set(part.lower() for part in relative.parts)
         if file.name == 'desktop.local.json' or '__pycache__' in parts or file.suffix == '.pyc':
             continue
-        if (parts & forbidden or file.suffix.lower() in {'.log', '.pcap', '.pcapng', '.tsv', '.jsonl', '.sqlite', '.db'}
+        if (parts & forbidden or file.suffix.lower() in {'.log', '.pcap', '.pcapng', '.tsv', '.jsonl', '.ylz', '.sqlite', '.sqlite3', '.db'}
                 or file.name.lower() in {'identity-cache.json', 'control.json', 'service.json', 'state.bin'}):
             raise RuntimeError(f'Private/runtime data found in build: {relative}')
         if relative.parts[0] not in roots and relative.as_posix() not in files:

@@ -1,7 +1,7 @@
 'use strict'
 const fs = require('node:fs'), path = require('node:path'), crypto = require('node:crypto')
 class BattleArchive {
-  constructor(root, source) { this.root = root; this.source = source; this.previous = new Map(); this.lastSequence = new Map() }
+  constructor(root, source, ledger = null) { this.root = root; this.source = source; this.ledger = ledger; this.previous = new Map(); this.lastSequence = new Map() }
   update(snapshot, names) {
     let clock = snapshot.encounterClock
     if (!clock?.startObservedAt || !snapshot.observedAt || Date.parse(snapshot.observedAt) < Date.parse(clock.startObservedAt)) return
@@ -17,7 +17,10 @@ class BattleArchive {
     const dir = path.join(this.root, 'battles', id); fs.mkdirSync(dir, { recursive: true })
     const record = { ...snapshot, encounterClock: clock, source: { ...snapshot.source, mode: 'replay' } }
     if (this.lastSequence.get(id) !== snapshot.sequence) {
-      fs.appendFileSync(path.join(dir, 'statistics.jsonl'), JSON.stringify(record) + '\n'); this.lastSequence.set(id, snapshot.sequence)
+      const file = path.join(dir, 'statistics.jsonl'), text = JSON.stringify(record) + '\n'
+      if (this.ledger) this.ledger.append(file, text)
+      else fs.appendFileSync(file, text)
+      this.lastSequence.set(id, snapshot.sequence)
     }
     const battle = { schemaVersion: 1, id, source: this.source, clock, statistics: record, identities: names,
       status: timer?.phase === 'interrupted' || clock.endReason === 'capture-stopped' ? 'interrupted' : clock.endObservedAt ? 'ended' : 'active',

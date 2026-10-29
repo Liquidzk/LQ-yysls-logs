@@ -107,7 +107,16 @@ fs.writeFileSync(config, JSON.stringify({ pid: 1, processStartUtc: '2026-01-01T0
 const output = path.join(local, 'capture')
 const result = spawnSync(process.execPath, [path.join(root, 'runtime/collector/tools/p1-live-pipeline.cjs'), '--config', config, '--out', output, '--replay', packets], { encoding: 'utf8', windowsHide: true, timeout: 60000 })
 assert.equal(result.status, 0, result.stderr)
-const rows = name => fs.readFileSync(path.join(output, name), 'utf8').trim().split('\n').map(JSON.parse)
+const rows = name => {
+  const data = fs.readFileSync(path.join(output, name + '.ylz')), blocks = []
+  for (let offset = 0; offset < data.length;) {
+    assert.equal(data.toString('ascii', offset, offset + 4), 'YLZ1')
+    const size = data.readUInt32LE(offset + 4)
+    const raw = require('node:zlib').inflateSync(data.subarray(offset + 12, offset + 12 + size))
+    assert.equal(raw.length, data.readUInt32LE(offset + 8)); blocks.push(raw); offset += 12 + size
+  }
+  return Buffer.concat(blocks).toString('utf8').trim().split('\n').map(JSON.parse)
+}
 const stats = rows('statistics.jsonl'), hits = rows('damage-events.jsonl'), buffs = rows('buff-events.jsonl'), settlement = rows('settlement-details.jsonl')
 const actions = rows('action-events.jsonl')
 assert.deepEqual(actions.filter(a=>a.actionKind!=='visibility').map(a=>a.actionKind),['snapshot','boundary','cast','end'])
@@ -125,7 +134,7 @@ assert.equal(stats.at(-1).battleTimer.phase, 'finalized'); assert.equal(stats.at
 assert.equal(hits.length, 1); assert.equal(hits[0].amount, 100); assert.equal(hits[0].rawSkillId, 456)
 assert.equal(hits[0].sourceActorName, '离线验证角色')
 if (cachedOnly) {
-  assert.equal(fs.existsSync(path.join(output, 'identity-events.jsonl')), false)
+  assert.equal(fs.existsSync(path.join(output, 'identity-events.jsonl.ylz')), false)
   const names = JSON.parse(fs.readFileSync(path.join(output, 'identities.json'))).names
   assert.equal(names.length, 2); assert.equal(names.every(n => n.cached === true), true)
 }

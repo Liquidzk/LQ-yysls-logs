@@ -6,6 +6,7 @@ from pathlib import Path
 import sqlite3
 import threading
 from datetime import datetime, timezone
+from wire_ledger import ledger_path, fingerprint, iter_records, LedgerReader
 
 
 def read_json(path, default=None):
@@ -28,6 +29,14 @@ def last_terminal(latest):
     return latest.get('health', {}).get('status') in ('stopped', 'invalid')
 
 
+class IndexConnection(sqlite3.Connection):
+    def __exit__(self, *args):
+        try:
+            return super().__exit__(*args)
+        finally:
+            self.close()
+
+
 class WireStore:
     streams = {'statistics.jsonl': 'counter', 'damage-events.jsonl': 'hit', 'buff-events.jsonl': 'buff',
                'encounter-events.jsonl': 'boundary', 'identity-events.jsonl': 'identity',
@@ -39,17 +48,18 @@ class WireStore:
         self.data.mkdir(parents=True, exist_ok=True)
         self.root.mkdir(parents=True, exist_ok=True)
         self.registry = self.data / 'capture-sources.json'
-        self.dbpath = self.data / 'capture-index.sqlite3'
+        # v1 remains available to older clients; v2 never stores event JSON twice.
+        self.dbpath = self.data / 'capture-index-v2.sqlite3'
         self.lock = threading.RLock()
         self.timeline_cache = {}
         with self.connect() as db:
-            db.executescript('''CREATE TABLE IF NOT EXISTS streams(root TEXT,file TEXT,offset INTEGER,ordinal INTEGER,PRIMARY KEY(root,file));
-            CREATE TABLE IF NOT EXISTS events(root TEXT,stream TEXT,ordinal INTEGER,ts REAL,kind TEXT,actor TEXT,target TEXT,skill TEXT,buff TEXT,payload TEXT,PRIMARY KEY(root,stream,ordinal));
+            db.executescript('''CREATE TABLE IF NOT EXISTS streams(root TEXT,file TEXT,offset INTEGER,ordinal INTEGER,identity TEXT,tail TEXT,mtime INTEGER,size INTEGER,PRIMARY KEY(root,file));
+            CREATE TABLE IF NOT EXISTS events(root TEXT,stream TEXT,ordinal INTEGER,ts REAL,kind TEXT,actor TEXT,target TEXT,skill TEXT,buff TEXT,block INTEGER,position INTEGER,length INTEGER,amount,transport INTEGER,invalidation INTEGER,PRIMARY KEY(root,stream,ordinal));
             CREATE INDEX IF NOT EXISTS capture_time ON events(root,ts);
             CREATE INDEX IF NOT EXISTS capture_kind ON events(root,kind,ts);''')
 
     def connect(self):
-        db = sqlite3.connect(self.dbpath, timeout=30)
+        db = sqlite3.connect(self.dbpath, timeout=30, factory=IndexConnection)
         db.row_factory = sqlite3.Row
         db.execute('PRAGMA journal_mode=WAL')
         return db
@@ -58,9 +68,9 @@ class WireStore:
         roots = list(self.root.glob('sessions/*/capture'))
         for item in read_json(self.registry, []) or []:
             folder = Path(item)
-            if (folder / 'latest.json').is_file() or (folder / 'statistics.jsonl').is_file():
+            if (folder / 'latest.json').is_file() or ledger_path(folder, 'statistics.jsonl').is_file():
                 roots.append(folder)
-            if (folder / 'capture' / 'statistics.jsonl').is_file():
+            if ledger_path(folder / 'capture', 'statistics.jsonl').is_file():
                 roots.append(folder / 'capture')
             roots.extend(folder.glob('sessions/*/capture'))
             roots.extend(folder.glob('*/capture'))
@@ -72,9 +82,9 @@ class WireStore:
             raise ValueError('请选择捕获记录目录')
         if folder.name == 'battles' or (folder / 'battle.json').is_file():
             folder = folder.parent if folder.name == 'battles' else folder.parent.parent
-        if not ((folder / 'latest.json').is_file() or (folder / 'statistics.jsonl').is_file()
-                or (folder / 'capture' / 'statistics.jsonl').is_file()
-                or list(folder.glob('sessions/*/capture/statistics.jsonl')) or list(folder.glob('*/capture/statistics.jsonl'))):
+        if not ((folder / 'latest.json').is_file() or ledger_path(folder, 'statistics.jsonl').is_file()
+                or ledger_path(folder / 'capture', 'statistics.jsonl').is_file()
+                or list(folder.glob('sessions/*/capture/statistics.jsonl*')) or list(folder.glob('*/capture/statistics.jsonl*'))):
             raise ValueError('未找到捕获记录。请选择 capture、会话目录或包含 sessions 的目录。')
         with self.lock:
             rows = read_json(self.registry, []) or []
@@ -167,50 +177,70 @@ class WireStore:
         return {'control': control, 'service': {k: service.get(k) for k in ('message', 'detail', 'at', 'binding')},
                 'latest': latest, 'health': health, 'key': self.key(Path(candidate).resolve().parent) if candidate and latest else None}
 
+    @staticmethod
+    def tail_hash(path, offset):
+        with path.open('rb') as stream:
+            stream.seek(max(0, offset - 64))
+            return hashlib.sha256(stream.read(min(offset, 64))).hexdigest()
+
     def sync(self, root):
         root_key, more, errors = self.key(root), False, 0
         with self.lock, self.connect() as db:
-            # Explicit offline rebuilds preserve original observations. Use one
-            # complete action stream, never combine old starts with new starts.
-            rebuilt = (root / 'action-reprocessed.jsonl').is_file()
+            rebuilt = ledger_path(root, 'action-reprocessed.jsonl').is_file()
             inactive = 'action-events.jsonl' if rebuilt else 'action-reprocessed.jsonl'
-            db.execute('DELETE FROM events WHERE root=? AND stream=?', (root_key, inactive))
+            if db.execute('DELETE FROM events WHERE root=? AND stream=?', (root_key, inactive)).rowcount:
+                self.timeline_cache.clear()
             db.execute('DELETE FROM streams WHERE root=? AND file=?', (root_key, inactive))
             for file, kind in self.streams.items():
                 if file == inactive: continue
-                path = root / file
+                path = ledger_path(root, file)
                 if not path.is_file():
+                    if db.execute('DELETE FROM events WHERE root=? AND stream=?', (root_key, file)).rowcount:
+                        self.timeline_cache.clear()
+                    db.execute('DELETE FROM streams WHERE root=? AND file=?', (root_key, file))
                     continue
-                old = db.execute('SELECT offset,ordinal FROM streams WHERE root=? AND file=?', (root_key, file)).fetchone()
+                old = db.execute('SELECT * FROM streams WHERE root=? AND file=?', (root_key, file)).fetchone()
                 offset, ordinal = (old['offset'], old['ordinal']) if old else (0, 0)
-                size = path.stat().st_size
-                if size < offset:
-                    db.execute('DELETE FROM events WHERE root=? AND stream=?', (root_key, file)); offset, ordinal = 0, 0
-                limit = offset + 32 * 1024 * 1024
-                with path.open('rb') as stream:
-                    stream.seek(offset)
-                    while stream.tell() < size and stream.tell() < limit:
-                        line = stream.readline(4 * 1024 * 1024 + 1)
-                        if not line.endswith(b'\n'):
-                            if len(line) > 4 * 1024 * 1024:
-                                raise ValueError('捕获记录包含超大行，无法解析')
-                            break  # producer has not completed this line
-                        offset = stream.tell(); ordinal += 1
-                        try:
-                            row = json.loads(line)
-                            ts = timestamp(row.get('observedAt'))
-                            if ts is None or not math.isfinite(ts):
-                                errors += 1; continue
-                            actor = row.get('sourceActorHash') or row.get('idHash') or ''
-                            target = row.get('targetActorHash') or ''
-                            skill = row.get('rawSkillId', row.get('skill_id'))
-                            db.execute('INSERT OR REPLACE INTO events VALUES(?,?,?,?,?,?,?,?,?,?)',
-                                       (root_key, file, ordinal, ts, kind, actor, target, str(skill) if isinstance(skill, (str, int)) else '',
-                                        str(row.get('buffNo') or ''), json.dumps(row, ensure_ascii=False, allow_nan=False)))
-                        except (ValueError, TypeError, AttributeError):
-                            errors += 1
-                more |= offset >= limit and offset < size
-                db.execute('INSERT OR REPLACE INTO streams VALUES(?,?,?,?)', (root_key, file, offset, ordinal))
+                stat, identity = path.stat(), fingerprint(path)
+                size = stat.st_size
+                if old and (size < offset or identity != old['identity']
+                            or self.tail_hash(path, offset) != old['tail']
+                            or size == old['size'] and stat.st_mtime_ns != old['mtime']):
+                    db.execute('DELETE FROM events WHERE root=? AND stream=?', (root_key, file))
+                    self.timeline_cache.clear()
+                    offset, ordinal = 0, 0
+                consumed = 0
+                for checkpoint, block, position, length, line in iter_records(path, offset):
+                    offset = checkpoint; ordinal += 1; consumed += length
+                    try:
+                        row = json.loads(line)
+                        ts = timestamp(row.get('observedAt'))
+                        if ts is None or not math.isfinite(ts):
+                            errors += 1; continue
+                        # Keep the previous validation contract, without retaining
+                        # a second serialized copy in SQLite.
+                        json.dumps(row, allow_nan=False)
+                        actor = row.get('sourceActorHash') or row.get('idHash') or ''
+                        target = row.get('targetActorHash') or ''
+                        skill = row.get('rawSkillId', row.get('skill_id'))
+                        amount = row.get('amount')
+                        if type(amount) not in (int, float): amount = None
+                        transport = row.get('transportRecordOrdinal')
+                        if type(transport) is not int: transport = None
+                        # Use SQLite's JSON numeric conversion, as v1 did at
+                        # query time, retaining integer/real precision exactly.
+                        db.execute("INSERT OR REPLACE INTO events VALUES(?,?,?,?,?,?,?,?,?,?,?,?,json_extract(?,'$'),?,?)",
+                                   (root_key, file, ordinal, ts, kind, actor, target,
+                                    str(skill) if isinstance(skill, (str, int)) else '', str(row.get('buffNo') or ''),
+                                    block, position, length, json.dumps(amount), transport, int(row.get('kind') == 'invalidation')))
+                    except (ValueError, TypeError, AttributeError, OverflowError):
+                        errors += 1
+                more |= consumed >= 32 * 1024 * 1024 and offset < size
+                if consumed: self.timeline_cache.clear()
+                if offset < size and consumed < 32 * 1024 * 1024 and (root / 'completion.json').is_file():
+                    errors += 1  # retain preceding frames, surface a torn closed tail
+                db.execute('INSERT OR REPLACE INTO streams VALUES(?,?,?,?,?,?,?,?)',
+                           (root_key, file, offset, ordinal, identity, self.tail_hash(path, offset), stat.st_mtime_ns, size))
         return more, errors
 
     def timeline(self, key, window=3):
@@ -223,27 +253,28 @@ class WireStore:
         root, battle = entry['root'], entry['battle']
         more, errors = self.sync(root)
         cache_key = (key, window)
-        stamps = tuple((f, (root / f).stat().st_size) for f in self.streams if (root / f).exists())
+        stamps = tuple((p.name, p.stat().st_size, p.stat().st_mtime_ns) for f in self.streams
+                       for p in [ledger_path(root, f)] if p.exists())
         signature = (stamps, json.dumps(battle, sort_keys=True), more)
         cached = self.timeline_cache.get(cache_key)
-        if cached and cached[0] == signature: return cached[1]
+        if not more and cached and cached[0] == signature: return cached[1]
         clock = battle.get('clock', {})
         lower = timestamp(clock.get('startObservedAt'))
         if lower is None: raise ValueError('这份记录没有有效的开战时间，请选择其他战斗')
         upper = timestamp(clock.get('endObservedAt'))
         root_key = self.key(root)
-        with self.connect() as db:
+        with self.connect() as db, LedgerReader(root) as reader:
             if upper is None:
                 upper = db.execute('SELECT max(ts) FROM events WHERE root=?', (root_key,)).fetchone()[0] or lower
             upper = max(lower, upper)
-            snapshots = [json.loads(r[0]) for r in db.execute("SELECT payload FROM events WHERE root=? AND kind='counter' AND ts>=? AND ts<=? ORDER BY ts,ordinal", (root_key, lower - 5, upper))]
+            snapshots = [reader.event(r) for r in db.execute("SELECT * FROM events WHERE root=? AND kind='counter' AND ts>=? AND ts<=? ORDER BY ts,ordinal", (root_key, lower - 5, upper))]
             # Do not draw a line from a previous encounter's retained counters.
             snapshots = [s for s in snapshots if not s.get('encounterClock', {}).get('startObservedAt') or s['encounterClock']['startObservedAt'] == clock['startObservedAt']]
-            buffs = [json.loads(r[0]) for r in db.execute("SELECT payload FROM events WHERE root=? AND kind='buff' AND ts<=? ORDER BY ts,json_extract(payload,'$.transportRecordOrdinal'),CASE WHEN json_extract(payload,'$.kind')='invalidation' THEN 0 ELSE 1 END,stream,ordinal", (root_key, upper))]
-            actions = [(r['kind'], json.loads(r['payload'])) for r in db.execute("SELECT kind,payload FROM events WHERE root=? AND ((kind='action' AND ts<=?) OR (kind='hit' AND ts>=? AND ts<=?)) ORDER BY ts,json_extract(payload,'$.transportRecordOrdinal'),stream,ordinal", (root_key, upper, lower, upper))]
+            buffs = [reader.event(r) for r in db.execute("SELECT * FROM events WHERE root=? AND kind='buff' AND ts<=? ORDER BY ts,transport,CASE WHEN invalidation=1 THEN 0 ELSE 1 END,stream,ordinal", (root_key, upper))]
+            actions = [(r['kind'], reader.event(r)) for r in db.execute("SELECT * FROM events WHERE root=? AND ((kind='action' AND ts<=?) OR (kind='hit' AND ts>=? AND ts<=?)) ORDER BY ts,transport,stream,ordinal", (root_key, upper, lower, upper))]
             settlement = None
-            for row in db.execute("SELECT payload FROM events WHERE root=? AND kind='settlement' AND ts>=? AND ts<=? ORDER BY ts,ordinal", (root_key, upper, upper + 5)):
-                detail = json.loads(row[0])
+            for row in db.execute("SELECT * FROM events WHERE root=? AND kind='settlement' AND ts>=? AND ts<=? ORDER BY ts,ordinal", (root_key, upper, upper + 5)):
+                detail = reader.event(row)
                 if (detail.get('encounterContext') or {}).get('startObservedAt') == clock['startObservedAt'] and detail.get('timeCostSeconds', 0) > 0:
                     settlement = detail; break
         final = battle.get('statistics', {}) or {}
@@ -272,14 +303,14 @@ class WireStore:
         root_key, battle = self.key(root), entry['battle']
         clock = (battle or {}).get('clock', {})
         lower, upper = timestamp(clock.get('startObservedAt')), timestamp(clock.get('endObservedAt'))
-        with self.connect() as db:
+        with self.connect() as db, LedgerReader(root) as reader:
             extent = db.execute('SELECT min(ts),max(ts) FROM events WHERE root=?', (root_key,)).fetchone()
             lower = lower if lower is not None else extent[0] or 0
             upper = upper if upper is not None else extent[1] or lower
             upper = max(lower, upper)
             where, values = 'root=? AND ts>=? AND ts<=?', [root_key, lower, upper]
-            counter_rows = db.execute('SELECT payload FROM events WHERE ' + where + " AND kind='counter' ORDER BY ts,ordinal", values).fetchall()
-            snapshots = [json.loads(r[0]) for r in counter_rows]
+            counter_rows = db.execute('SELECT * FROM events WHERE ' + where + " AND kind='counter' ORDER BY ts,ordinal", values).fetchall()
+            snapshots = [reader.event(r) for r in counter_rows]
             latest = snapshots[-1] if snapshots else (battle or {}).get('statistics', {}) or entry['latest']
             # Final counters can arrive after the end signal. Only accept a
             # snapshot explicitly associated with this battle's start anchor.
@@ -300,9 +331,8 @@ class WireStore:
             observed_skills = [dict(row) for row in db.execute('''
                 SELECT actor AS sourceActorHash,target AS targetActorHash,skill AS skillId,
                        count(*) AS notificationCount,
-                       sum(CASE WHEN json_type(payload,'$.amount') IN ('integer','real')
-                                THEN json_extract(payload,'$.amount') END) AS amount,
-                       count(CASE WHEN json_type(payload,'$.amount') IN ('integer','real') THEN 1 END) AS measuredCount,
+                       sum(amount) AS amount,
+                       count(amount) AS measuredCount,
                        min(ts) AS firstObservedAt,max(ts) AS lastObservedAt
                 FROM events WHERE ''' + skill_where + '''
                 GROUP BY actor,target,skill ORDER BY amount DESC,notificationCount DESC''', skill_values)]
@@ -311,8 +341,8 @@ class WireStore:
                 row['last'] = row.pop('lastObservedAt') - lower
             # Settlements may arrive after the battle end signal. Require the stored battle anchor when available.
             details = []
-            for r in db.execute('SELECT payload FROM events WHERE root=? AND kind=? ORDER BY ts DESC', (root_key, 'settlement')):
-                item = json.loads(r[0])
+            for r in db.execute('SELECT * FROM events WHERE root=? AND kind=? ORDER BY ts DESC', (root_key, 'settlement')):
+                item = reader.event(r)
                 if battle and (item.get('encounterContext') or {}).get('startObservedAt') != clock.get('startObservedAt'):
                     continue
                 details.append(item)
@@ -337,7 +367,7 @@ class WireStore:
             total = db.execute('SELECT count(*) FROM events WHERE ' + where, values).fetchone()[0]
             offset = max(0, int(offset))
             rows = db.execute('SELECT * FROM events WHERE ' + where + ' ORDER BY ts,stream,ordinal LIMIT 100 OFFSET ?', [*values, offset]).fetchall()
-        events = [{'kind': r['kind'], 't': r['ts'] - lower, 'data': json.loads(r['payload'])} for r in rows]
+            events = [{'kind': r['kind'], 't': r['ts'] - lower, 'data': reader.event(r)} for r in rows]
         # Names may arrive after a hit. Resolve the retained ID against the
         # session's later authoritative name observation without rewriting raw logs.
         for event in events:

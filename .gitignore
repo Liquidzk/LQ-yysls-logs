@@ -16,3 +16,4 @@ desktop/assets/
 *.bin
 *.sqlite*
 *.json.gz
+*.ylz
