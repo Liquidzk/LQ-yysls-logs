@@ -1,6 +1,6 @@
 // The renderer receives narrow actions, never a Node or filesystem handle.
 const { contextBridge, ipcRenderer } = require('electron')
-const keys = ['yanyun-last-review', 'yanyun-review-view', 'yanyun-overlay-v2']
+const keys = ['yanyun-last-review', 'yanyun-review-view', 'yanyun-overlay-v2', 'yanyun-timeline-layout-v1']
 try {
   const saved = ipcRenderer.sendSync('preferences:read')
   for (const key of keys) if (typeof saved[key] === 'string' && localStorage.getItem(key) === null) localStorage.setItem(key, saved[key])

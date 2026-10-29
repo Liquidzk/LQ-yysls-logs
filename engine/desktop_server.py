@@ -16,8 +16,8 @@ class DesktopHandler(Handler):
     def do_GET(self):
         path=unquote(urlparse(self.path).path)
         if not self.valid_host():self.send({'error':'仅限本机访问'},403);return
-        if path in ('/', '/capture', '/workbench.js', '/workbench.css', '/timeline.js', '/timeline.css'):
-            name={'/':'workbench.html','/capture':'workbench.html','/workbench.js':'workbench.js','/workbench.css':'workbench.css','/timeline.js':'timeline.js','/timeline.css':'timeline.css'}[path]
+        if path in ('/', '/capture', '/workbench.js', '/workbench.css', '/timeline.js', '/timeline-layout.js', '/timeline.css'):
+            name={'/':'workbench.html','/capture':'workbench.html','/workbench.js':'workbench.js','/workbench.css':'workbench.css','/timeline.js':'timeline.js','/timeline-layout.js':'timeline-layout.js','/timeline.css':'timeline.css'}[path]
             from combat import ROOT
             file=ROOT/'web'/name
             self.send(file.read_bytes(),ctype=mimetypes.guess_type(str(file))[0]+'; charset=utf-8');return

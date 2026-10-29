@@ -14,7 +14,7 @@ if (qaRoot) { fs.mkdirSync(path.join(qaRoot, 'preferences'), { recursive: true }
 let main, overlay, tray, engine, captureManager, origin, quitting = false, settings, preferenceFile
 let overlaySource = 'live', overlayLocked = false
 let starShortcut = false
-const preferenceKeys = ['yanyun-last-review', 'yanyun-review-view', 'yanyun-overlay-v2']
+const preferenceKeys = ['yanyun-last-review', 'yanyun-review-view', 'yanyun-overlay-v2', 'yanyun-timeline-layout-v1']
 const readJson = (file, fallback) => { try { return JSON.parse(fs.readFileSync(file, 'utf8').replace(/^\uFEFF/, '')) } catch { return fallback } }
 const writeJson = (file, value) => { fs.mkdirSync(path.dirname(file), { recursive: true }); fs.writeFileSync(file + '.tmp', JSON.stringify(value)); fs.renameSync(file + '.tmp', file) }
 const runningClientFile = path.join(app.getPath('userData'), 'running-client.json')
@@ -127,7 +127,7 @@ async function start() {
   ipcMain.on('preferences:save', (event, value) => {
     if (!trusted(event) || !value || typeof value !== 'object') return
     const next = prefs()
-    for (const key of preferenceKeys) if (typeof value[key] === 'string' && value[key].length < 100000) next[key] = value[key]
+    for (const key of preferenceKeys) if (typeof value[key] === 'string' && value[key].length < (key === 'yanyun-timeline-layout-v1' ? 1000000 : 100000)) next[key] = value[key]
     writeJson(preferenceFile, next)
   })
   ipcMain.handle('overlay:show', (event, source) => { if (trusted(event)) return openOverlay(source || 'review') })

@@ -1,4 +1,4 @@
-LQ 燕云 Logs 0.4.8
+LQ 燕云 Logs 0.4.13
 ================
 
 Windows 独立客户端：手动选择燕云进程后采集，实时悬浮统计，保存捕获记录用于复盘；也可单独导入游戏本地 CLv2 日志。
@@ -8,7 +8,7 @@ Windows 独立客户端：手动选择燕云进程后采集，实时悬浮统计
 功能
 - 网络捕获：只读连接状态初始化、版本校验、被动 TCP/KCP 捕获、连续性校验、协议解析；支持已验证的 UU IPv4 UDP 转发格式。
 - 复盘：队伍服务器累计值、技能结算、逐次伤害/治疗通知、Buff 观测、战斗边界，按角色和编号筛选及分页。
-- 战斗时间线：全队与个人 DPS 曲线，1/3/5/10 秒滑动窗口；区间查看；可搜索、多选的 Buff 覆盖条；逐人动作持续条、动作顺序与间隔排行，保留开始、结束、分段和命中轨道。
+- 战斗时间线：全队与个人 DPS 曲线，1/3/5/10 秒滑动窗口；区间查看；可勾选、拖动混排的玩家 Buff、Boss 效果和玩家动作时间线组；布局按战斗保存。底部动作顺序与间隔明细可独立选择多人，保留开始、结束、分段和命中轨道。
 - 技能开始通过服务器 sync_event_data 属性队列记录；技能结束与分段读取同步消息。入场快照与施放分别标记，多段命中不合并成施法次数。
 - 保存完整会话、原始捕获、解码事件和识别出的战斗段；导入已有 capture 目录不改写原始记录。
 - 本地 CLv2：文件/压缩包导入、手动扫描、技能阶段、Buff 覆盖、笔记和多视角合并。
@@ -43,7 +43,7 @@ Kagerou 上游源码仍在子模块中便于追溯，发行包仅允许 yanyun/ 
    可用 --observed <编号出现次数.json> 生成覆盖核对。源输入为本机资料，不随源码包发布；发行包包含生成的名称表。
 6. powershell -NoProfile -ExecutionPolicy Bypass -File tools/build-engine.ps1 -Python <Python 路径>
 7. npm run package
-8. 输出 release/v0.4.8/LQ-yysls-logs-win32-x64/燕云Logs.exe；完整目录一起使用。
+8. 输出 release/v0.4.13/LQ-yysls-logs-win32-x64/燕云Logs.exe；完整目录一起使用。
 
 开发运行：先构建解析引擎、准备采集资源，再 npm start。
 可在根目录创建 desktop.local.json 指定 dataDir 和 logRoot；该配置只保存在本机。
@@ -71,7 +71,7 @@ runtime/、release/、游戏名称表、协议资产、原始战斗、个人配�
 完整操作说明见 docs/客户端使用说明.txt。
 
 GitHub 发布
-在已提交且干净的工作区运行 python tools/prepare-release.py，生成 release/github/v0.4.8 下的客户端压缩包、含 Kagerou 子模块的源码包、文件清单及 SHA256 校验文件。
+在已提交且干净的工作区运行 python tools/prepare-release.py，生成 release/github/v0.4.13 下的客户端压缩包、含 Kagerou 子模块的源码包、文件清单及 SHA256 校验文件。
 发布整理会校验采集代码和界面是否与当前源码一致，排除 desktop.local.json 与 Python 缓存，发现战斗记录或其他运行时数据时中止。不会修改正在运行的安装目录。
 先推送 vendor/kagerou 的 yanyun-desktop 分支，再推送主仓库 main，确保他人能够取得子模块固定提交。
-登录 GitHub CLI 后，用 gh release create v0.4.8 --verify-tag --prerelease --title "燕云 Logs 0.4.8 测试版" --notes-file docs/release-v0.4.8.txt 上传上述附件；需先创建并推送对应源码标签。
+登录 GitHub CLI 后，用 gh release create v0.4.13 --verify-tag --prerelease --title "燕云 Logs 0.4.13 测试版" --notes-file docs/release-v0.4.13.txt 上传上述附件；需先创建并推送对应源码标签。
