@@ -1,7 +1,7 @@
 {
   "name": "lq-yysls-logs",
   "productName": "燕云 Logs",
-  "version": "0.4.8",
+  "version": "0.4.9",
   "private": true,
   "description": "Local combat review desktop client powered by Kagerou",
   "license": "GPL-3.0-or-later",

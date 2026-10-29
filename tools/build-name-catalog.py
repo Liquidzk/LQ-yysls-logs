@@ -65,6 +65,24 @@ def build(documents, locale, observed=None, supplements=None):
                                         'name': names['skills'][parent], 'resolution': 'main_skill', 'label': '主技能名称（保留动作编号）'}
             unresolved['skills'].pop(ident, None); changed = True
         if not changed: break
+    # A fully read action whose main skill also has no display name is unnamed,
+    # not a localization failure. Missing rows, partial rows and cycles stay pending.
+    while True:
+        changed = False
+        for ident, row in tables.get('skills', {}).items():
+            state = unresolved['skills'].get(ident)
+            values = row.get('values', {})
+            if not state or state['status'] != 'pending' or row.get('error') or row.get('unresolved_headers'):
+                continue
+            if any(values.get(field) for field in ('name', 'ui_name', 'btn_name')):
+                continue
+            parent = str(values.get('skill_main_id', ''))
+            parent_row = tables['skills'].get(parent, {})
+            if parent_row.get('deleted') or unresolved['skills'].get(parent, {}).get('status') != 'unnamed':
+                continue
+            unresolved['skills'][ident] = {'status': 'unnamed', 'reason': '客户端动作及主技能均未设置显示名'}
+            changed = True
+        if not changed: break
     # A reviewed UI/resource cross-check is scoped to an exact row and text key.
     # Reject stale mappings after game updates instead of inheriting by ID range.
     allowed = {kind: (table, fields) for kind, table, fields in specs}

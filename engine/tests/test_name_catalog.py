@@ -24,6 +24,24 @@ class NameCatalogTests(unittest.TestCase):
         return {'entries':[{'kind':'buffs','table':'buff','row':'10','field':'buff_name',
                             'text_key':'123','name':'崩解','evidence':{'method':'game-ui-and-exact-resource','sources':['local-reviewed-ui']}}]}
 
+    def test_unnamed_main_skill_chain_does_not_hide_missing_or_partial_names(self):
+        docs = {'skills': {'rows': {
+            '3': {'values': {'skill_main_id': 2}},
+            '2': {'values': {'skill_main_id': 1}},
+            '1': {'values': {'skill_main_id': 1}},
+            '4': {'values': {'skill_main_id': 1, 'name': 123}},
+            '5': {'values': {'skill_main_id': 1}, 'error': 'incomplete row'},
+            '6': {'values': {'skill_main_id': 99}},
+            '7': {'values': {'skill_main_id': 8}},
+            '8': {'values': {}, 'deleted': True},
+        }}}
+        result = module.build(docs, {})
+        for ident in ('1', '2', '3'):
+            self.assertEqual(result['unresolved']['skills'][ident]['status'], 'unnamed')
+        for ident in ('4', '5', '6', '7'):
+            self.assertEqual(result['unresolved']['skills'][ident]['status'], 'pending')
+        self.assertFalse(result['names']['skills'])
+
     def test_reviewed_name_requires_exact_row_and_retains_evidence(self):
         docs={'buff':{'rows':{'10':{'values':{'buff_name':123}},'11':{'values':{'buff_name':124}}}}}
         result=module.build(docs,{}, {'buffs':{'10':3,'11':1}},self.supplement())
