@@ -16,7 +16,7 @@ def properties(items,parent=(),preset=None):
   if item.HasField('dict'):yield from properties(item.dict.item,path,preset)
 
 class EncounterIdentity:
- def __init__(self):self.preset=get_preset();self.npcs={};self.spaces={};self.guid_spaces={}
+ def __init__(self):self.preset=get_preset();self.npcs={};self.spaces={};self.guid_spaces={};self.emitted={}
  def consume(self,msg):
   typ=msg.DESCRIPTOR.name
   if typ=='AreaCreateEntityMsg' and msg.name==b'Npc':
@@ -38,7 +38,14 @@ class EncounterIdentity:
    # Exact preset dictionary: 2817=dungeon, 6125=npcs.
    if len(path)==3 and path[:2]==('dungeon','npcs') and isinstance(path[2],bytes) and isinstance(v,int):
     state['npcSerials'][actor_hash(path[2])]=v;changed=True
-  return [self.context(state)] if changed else []
+  return self.emit([state]) if changed else []
  def context(self,state):
   return {'kind':'encounter-identity','spaceHash':state['spaceHash'],'dungeonSid':state.get('dungeonSid'),'dungeonGameId':state.get('dungeonGameId'),'npcs':[{**self.npcs[h],'dungeonSerialId':serial} for h,serial in state['npcSerials'].items() if h in self.npcs],'preset':self.preset.id,'nameSource':None}
- def contexts(self):return [self.context(s) for s in self.spaces.values() if any(h in self.npcs for h in s['npcSerials'])]
+ def emit(self,states):
+  out=[]
+  for state in states:
+   row=self.context(state);key=state['spaceHash']
+   if self.emitted.get(key)==row:continue
+   self.emitted[key]=row;out.append(row)
+  return out
+ def contexts(self):return self.emit(s for s in self.spaces.values() if any(h in self.npcs for h in s['npcSerials']))

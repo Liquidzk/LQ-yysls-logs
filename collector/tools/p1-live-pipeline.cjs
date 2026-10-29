@@ -41,7 +41,7 @@ if (identities.size) write('identities.json', { source, names: [...identities.va
 const counters = { packets: 0, blocks: 0, statistics: 0, damageEvents: 0, buffEvents: 0, rejectedEvents: 0, settlements: 0 }
 let latest = { schemaVersion: 1, source, observedAt: null, actors: [], sequence: 0, npcNo: null, timeCostSeconds: 0,
   health: { status: 'starting', stale: true, gap: false, session: mode === 'live' ? 'pending' : 'recorded' } }
-let clock = null, buffCoverage = { complete: false, attributionReady: false }, lastStatisticWall = 0
+let clock = null, startContext = null, buffCoverage = { complete: false, attributionReady: false }, lastStatisticWall = 0
 let lastPacketObservedAt = null
 let stopped = false, failing = false, capture, watcher, tick, pumpTimer, startTimer, lastBindWall = 0, binding = null
 let rawFd = null, rawReadFd = null, rawOffset = 0, rawSize = 0, rawPending = '', nextJob = 0, lastPublish = 0, publishTimer = null
@@ -50,7 +50,21 @@ fs.writeFileSync(path.join(out, 'manifest.json'), JSON.stringify({ schemaVersion
   mode, sessionId, configSha256: hash(fs.readFileSync(configPath)), pid: c.pid, processStartUtc: c.processStartUtc,
   limits: ['Only messages delivered to this client are visible.', 'Notification times are packet reception times.',
     'Cumulative counters are not summed with per-hit notifications.', 'Complete teammate casts/private buffs and rDPS remain unverified.'] }, null, 2))
+function syncClock() {
+  const timer = battleTimer.snapshot()
+  if (timer.phase === 'active' && timer.basis === 'server-battle-state' && timer.startObservedAt !== clock?.startObservedAt) {
+    clock = { source: { sessionId }, spaceHash: timer.spaceHash, startObservedAt: timer.startObservedAt, endObservedAt: null,
+      npcNo: timer.npcNo, timingBasis: 'server_state_received; packet reception, not a server event timestamp',
+      identityContext: startContext?.spaceHash === timer.spaceHash ? startContext.identityContext : null }
+  }
+  if (clock && timer.startObservedAt === clock.startObservedAt && timer.endObservedAt && !clock.endObservedAt) {
+    clock.endObservedAt = timer.endObservedAt
+    clock.endReason = timer.endReason || (timer.phase === 'interrupted' ? 'scene-reset' : 'server-duration')
+  }
+}
 function publish(force = false, archiveChange = true) {
+  syncClock()
+  latest.encounterClock = clock && (clock.npcNo == null || clock.npcNo === latest.npcNo) ? clock : null
   latest.battleTimer = battleTimer.snapshot()
   latest.lastPacketObservedAt = lastPacketObservedAt
   latest.bossHealth = bossHealth.snapshot()
@@ -110,11 +124,12 @@ function receive(m, job) {
     if (bossHealth.consume(e, job.observedAt)) publish(false, false)
     if (e.kind === 'boss-battle-state' || e.kind === 'dungeon-finish-state') {
       const before = battleTimer.snapshot()
+      if (e.kind === 'boss-battle-state' && e.active) startContext = e
       battleTimer.boundary(e, job.observedAt)
-      if (e.kind === 'boss-battle-state' && e.initial) clock = null
-      if (e.kind === 'boss-battle-state' && e.active && e.previousActive === false && e.stateChanged && !e.initial) {
-        clock = { source: { sessionId }, spaceHash: e.spaceHash, startObservedAt: job.observedAt, endObservedAt: null,
-          npcNo: null, timingBasis: e.timingBasis, identityContext: e.identityContext }
+      syncClock()
+      if (e.kind === 'boss-battle-state' && e.initial) {
+        // Persist the old scene's terminal state before dropping its clock.
+        publish(true); clock = null
       }
       const after = battleTimer.snapshot()
       if (clock?.spaceHash === e.spaceHash && after.endObservedAt && !clock.endObservedAt) clock.endObservedAt = after.endObservedAt
@@ -139,6 +154,7 @@ function receive(m, job) {
       const stat = statisticFromBytes(bytes)
       stat.actors = stat.actors.map(a => ({ ...a, ...(identities.get(a.idHash) || {}) }))
       battleTimer.statistic(stat, job.observedAt)
+      syncClock()
       if (clock && stat.npcNo) { clock.npcNo ??= stat.npcNo; if (clock.npcNo === stat.npcNo) stat.encounterClock = { ...clock } }
       latest = { schemaVersion: 1, ...stamp, ...stat, sequence: ++counters.statistics,
         battleTimer: battleTimer.snapshot(), lastPacketObservedAt,

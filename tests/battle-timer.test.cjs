@@ -127,9 +127,46 @@ test('old snapshots and other scene victories cannot end the current pull', () =
   }
   timer.boundary(victory(), time(9)); assert.equal(timer.snapshot().phase, 'active')
   timer.boundary(victory(), time(15)); timer.statistic(stat(100, 5), time(16))
-  timer.boundary(boundary(true), time(20)); timer.boundary(victory({ initial: true }), time(21))
+  timer.boundary(boundary(true), time(20)); timer.statistic(stat(0), time(20.1)); timer.statistic(stat(1), time(20.2))
+  timer.boundary(victory({ initial: true }), time(21))
   assert.equal(timer.snapshot().phase, 'active')
   assert.equal(timer.snapshot().startObservedAt, time(20))
+})
+
+test('settlement corrections and rounded totals never create another timer', () => {
+  for (const supported of [false, true]) {
+    const timer = new BattleTimer('correction')
+    if (supported) timer.boundary(boundary(true), time(0))
+    timer.statistic(stat(3124958.134421387, 5.3), time(6))
+    const key = timer.snapshot().key
+    for (const amount of [3124774.134421387,3124774.134421386]) timer.statistic(stat(amount), time(8))
+    assert.equal(timer.snapshot().key, key); assert.equal(timer.snapshot().phase, 'finalized')
+  }
+})
+
+test('old scene reopening does not tick or create an attempt; a confirmed same-scene pull still can', () => {
+  const timer = new BattleTimer('reopen')
+  timer.boundary(boundary(true), time(0)); timer.statistic(stat(100), time(2))
+  timer.boundary(boundary(false), time(3)); timer.statistic(stat(100,3), time(3.1))
+  const key = timer.snapshot().key
+  timer.boundary(boundary(true), time(4)); timer.statistic(stat(100), time(4.3))
+  assert.equal(timer.snapshot().phase,'finalized'); assert.equal(timer.snapshot().key,key)
+  timer.statistic(stat(0),time(5));timer.statistic(stat(20),time(6))
+  assert.equal(timer.snapshot().phase,'active');assert.equal(timer.snapshot().startObservedAt,time(4))
+})
+
+test('new inactive scene drops the old reopen candidate and healing does not start a fallback timer', () => {
+  const timer = new BattleTimer('reopen')
+  timer.boundary(boundary(true),time(0));timer.statistic(stat(100,2),time(3))
+  timer.boundary(boundary(true),time(4))
+  timer.boundary({...boundary(false,true),spaceHash:'next'},time(4.4))
+  timer.statistic(stat(0),time(5));timer.statistic(stat(20),time(6))
+  assert.notEqual(timer.snapshot().phase,'active')
+  timer.boundary({...boundary(true),spaceHash:'next'},time(7))
+  assert.equal(timer.snapshot().startObservedAt,time(7))
+  const fallback=new BattleTimer('fallback');fallback.statistic(stat(0),time(1))
+  const heal=stat(0);heal.actors[0].heal=10;fallback.statistic(heal,time(2))
+  assert.notEqual(fallback.snapshot().phase,'active')
 })
 
 test('matching immediate formal settlement calibrates before another periodic counter', () => {

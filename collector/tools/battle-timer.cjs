@@ -10,6 +10,7 @@ class BattleTimer {
   constructor(sessionId) {
     this.sessionId = sessionId; this.ordinal = 0; this.current = null
     this.previous = null; this.zeroAt = null; this.spaceHash = null
+    this.stateKnown = false; this.pendingStart = null
   }
   start(observedAt, basis, npcNo = null, spaceHash = null) {
     this.current = { key: this.sessionId + ':' + ++this.ordinal, phase: 'active',
@@ -31,14 +32,24 @@ class BattleTimer {
       return
     }
     if (event.kind !== 'boss-battle-state' || at(observedAt) === null) return
+    this.stateKnown = true
+    if (event.initial && this.spaceHash !== event.spaceHash) this.pendingStart = null
+    if (!event.active) this.pendingStart = null
     if (event.initial || event.active) this.spaceHash = event.spaceHash
     if (event.active && event.previousActive === false && event.stateChanged && !event.initial) {
+      // Leaving/reopening a completed dungeon can briefly raise the old scene's
+      // flag again. Keep the result until reset counters confirm another pull.
+      if (this.current?.spaceHash === event.spaceHash && ['ended', 'finalized', 'interrupted'].includes(this.current.phase)) {
+        this.pendingStart = { observedAt, spaceHash: event.spaceHash, sawZero: false }
+        return
+      }
       this.start(observedAt, 'server-battle-state', null, event.spaceHash)
       this.previous = null; this.zeroAt = null
     } else if (!event.active && this.current?.phase === 'active' &&
         (!this.current.spaceHash || this.current.spaceHash === event.spaceHash)) {
       this.current.phase = 'ended'; this.current.endObservedAt = observedAt
       this.current.endReason = 'server-battle-state'
+      this.pendingStart = null
     } else if (event.initial && this.current?.phase === 'active' &&
         this.current.spaceHash && this.current.spaceHash !== event.spaceHash) {
       this.current.phase = 'interrupted'; this.current.endObservedAt = observedAt
@@ -66,25 +77,30 @@ class BattleTimer {
     if (at(observedAt) === null || !stat.actors.length) return
     let current = this.current
     if (current?.npcNo != null && current.npcNo !== stat.npcNo) {
-      this.current = current = null; this.previous = null; this.zeroAt = null
+      this.current = current = null; this.previous = null; this.zeroAt = null; this.pendingStart = null
     }
     const previous = this.previous, sum = total(stat)
-    // Reset detection compares the same actors, so a teammate leaving cannot
-    // masquerade as another pull. A full zero reset also handles roster changes.
-    const old = new Map((previous?.actors || []).map(a => [a.idHash, a]))
-    const decreased = previous?.npcNo === stat.npcNo && old.size === stat.actors.length &&
-      stat.actors.every(a => old.has(a.idHash) && ['damage', 'heal', 'absorbDmg'].every(k => a[k] <= old.get(a.idHash)[k])) &&
-      sum < total(previous)
-    const reset = previous?.npcNo === stat.npcNo && total(previous) > 0 && (sum === 0 || decreased)
+    const damage = stat.actors.reduce((n, a) => n + a.damage, 0)
+    if (this.pendingStart && !positive(stat.timeCostSeconds)) {
+      if (sum === 0) this.pendingStart.sawZero = true
+      else if (damage > 0 && this.pendingStart.sawZero) {
+        const pending = this.pendingStart; this.pendingStart = null
+        this.start(pending.observedAt, 'server-battle-state', stat.npcNo, pending.spaceHash)
+        current = this.current; this.zeroAt = null
+      }
+    }
+    // Partial corrections (including tiny floating-point changes after a
+    // settlement) are not resets. Use counters only without scene-state support.
+    const reset = previous?.npcNo === stat.npcNo && total(previous) > 0 && sum === 0
     const justStarted = current?.phase === 'active' && current.basis === 'server-battle-state' &&
       at(observedAt) - at(current.startObservedAt) < 5000
-    if (!positive(stat.timeCostSeconds) && reset && !justStarted) {
+    if (!this.stateKnown && !positive(stat.timeCostSeconds) && reset && !justStarted) {
       this.start(observedAt, 'counter-reset', stat.npcNo)
       current = this.current; this.zeroAt = sum === 0 ? observedAt : null
       // Some encounters reset counters well before combat actually starts.
       // Arm at zero, then use the last zero before the first positive update.
       if (sum === 0) Object.assign(current, { phase: 'armed', startObservedAt: null, resetObservedAt: observedAt })
-    } else if (!positive(stat.timeCostSeconds) && sum > 0 && this.zeroAt &&
+    } else if (!this.stateKnown && !positive(stat.timeCostSeconds) && damage > 0 && this.zeroAt &&
         (!current || ['armed', 'finalized', 'ended', 'interrupted', 'unknown'].includes(current.phase))) {
       if (current?.phase === 'armed') Object.assign(current, { phase: 'active', startObservedAt: this.zeroAt, basis: 'counter-first-activity' })
       else { this.start(this.zeroAt, 'counter-first-activity', stat.npcNo); current = this.current }

@@ -24,6 +24,10 @@ def timestamp(value):
         return None
 
 
+def last_terminal(latest):
+    return latest.get('health', {}).get('status') in ('stopped', 'invalid')
+
+
 class WireStore:
     streams = {'statistics.jsonl': 'counter', 'damage-events.jsonl': 'hit', 'buff-events.jsonl': 'buff',
                'encounter-events.jsonl': 'boundary', 'identity-events.jsonl': 'identity',
@@ -90,11 +94,44 @@ class WireStore:
             battles = sorted(root.glob('battles/*/battle.json'))
             # Keep the whole session available even when encounter boundaries are incomplete.
             out.append({'key': self.key(root), 'root': root, 'path': root, 'battle': None, 'latest': latest})
-            for file in battles:
-                battle = read_json(file, {}) or {}
+            decoded = [(file, read_json(file, {}) or {}) for file in battles]
+            decoded.sort(key=lambda item: item[1].get('clock', {}).get('startObservedAt') or '')
+            closed = (root / 'completion.json').is_file() or last_terminal(latest)
+            for index, (file, battle) in enumerate(decoded):
+                battle = self.battle_view(battle, superseded=index + 1 < len(decoded), closed=closed)
                 if battle.get('clock', {}).get('startObservedAt'):
                     out.append({'key': self.key(file.parent), 'root': root, 'path': file.parent, 'battle': battle, 'latest': latest})
         return out
+
+    @staticmethod
+    def battle_view(battle, superseded=False, closed=False):
+        """Repair legacy views from their own timer, without rewriting evidence."""
+        clock = dict(battle.get('clock') or {})
+        stat = dict(battle.get('statistics') or {})
+        timer = stat.get('battleTimer') or {}
+        start = clock.get('startObservedAt')
+        start_time = timestamp(start)
+        if start_time is None: return battle
+        matching = start and timer.get('startObservedAt') == start
+        status = battle.get('status')
+        if matching and timer.get('phase') in ('ended', 'finalized', 'interrupted'):
+            end = timestamp(timer.get('endObservedAt'))
+            if not clock.get('endObservedAt') and end is not None and end >= start_time:
+                clock.update(endObservedAt=timer['endObservedAt'], endReason=timer.get('endReason') or 'retained-timer')
+                status = 'interrupted' if timer['phase'] == 'interrupted' else 'ended'
+            if timer.get('phase') == 'finalized' and timer.get('durationSeconds', 0):
+                stat['timeCostSeconds'] = timer['durationSeconds']
+                if timer.get('finalActors'): stat['actors'] = timer['finalActors']
+        if start and not clock.get('endObservedAt') and (superseded or closed):
+            # An old unclosed attempt must never absorb the rest of a session.
+            # This is a review bound, not a claimed server end or clear time.
+            last = timestamp(stat.get('observedAt'))
+            if last is not None and last >= start_time:
+                clock.update(endObservedAt=stat['observedAt'], endReason='last-own-observation', endIncomplete=True)
+                status = 'interrupted'
+        if matching or stat.get('encounterClock', {}).get('startObservedAt') == start:
+            stat['encounterClock'] = clock
+        return dict(battle, clock=clock, statistics=stat, status=status)
 
     def find(self, key):
         result = next((e for e in self.entries() if e['key'] == key), None)
@@ -224,7 +261,7 @@ class WireStore:
                   'buffs': buff_intervals(buffs, lower, upper), 'actions': action_rows(actions, lower, upper),
                   'actionTiming': action_timing(actions, lower, upper),
                   'indexing': more, 'skippedRows': errors,
-                  'notice': '横轴为本机接收时间，结算时长单独显示。Buff 为观测覆盖：条纹表示起止不完整；未观测到不等于没有。'}
+                  'notice': ('结束边界缺失，范围只到本段最后观测，不代表完整战斗时长。' if clock.get('endIncomplete') else '') + '横轴为本机接收时间，结算时长单独显示。Buff 为观测覆盖：条纹表示起止不完整；未观测到不等于没有。'}
         with self.lock:
             if len(self.timeline_cache) >= 8: self.timeline_cache.clear()
             self.timeline_cache[cache_key] = (signature, result)
@@ -317,4 +354,4 @@ class WireStore:
                 'actors': actors, 'identities': identities, 'counts': stats, 'points': points, 'events': events, 'totalEvents': total,
                 'offset': offset, 'settlements': details, 'observedSkills': observed_skills, 'coverage': read_json(root / 'buff-coverage.json', {}),
                 'health': entry['latest'].get('health', {}), 'indexing': more, 'skippedRows': errors,
-                'notice': '网络观测记录；事件时间为本机接收时间。技能通知不等于完整施法，队友私有 Buff 与完整覆盖尚未验证。'}
+                'notice': ('结束边界缺失，范围只到本段最后观测，不代表完整战斗时长。' if clock.get('endIncomplete') else '') + '网络观测记录；事件时间为本机接收时间。技能通知不等于完整施法，队友私有 Buff 与完整覆盖尚未验证。'}

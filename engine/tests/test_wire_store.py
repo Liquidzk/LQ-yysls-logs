@@ -53,6 +53,32 @@ class WireStoreTests(unittest.TestCase):
         self.assertEqual(self.store.report(self.key)['counts']['buff'], 1)
         self.assertEqual(self.store.report(self.key)['counts']['buff'], 1)
 
+    def test_legacy_timer_closes_view_without_rewriting_original_archive(self):
+        folder=self.root/'battles'/'legacy';folder.mkdir(parents=True)
+        clock={'startObservedAt':'2026-01-01T00:00:05Z'}
+        stat=dict(self.stat,timeCostSeconds=0,encounterClock=clock,battleTimer={
+            'startObservedAt':clock['startObservedAt'],'endObservedAt':self.stat['observedAt'],
+            'phase':'finalized','durationSeconds':4.8,'finalActors':self.stat['actors']})
+        file=folder/'battle.json';original=json.dumps({'status':'active','clock':clock,'statistics':stat});file.write_text(original)
+        self.append('damage-events.jsonl',{'observedAt':'2026-01-01T01:00:00Z','amount':999})
+        result=self.store.report(self.store.key(folder))
+        self.assertEqual(result['duration'],4.8);self.assertEqual(result['counts'].get('hit',0),0)
+        self.assertEqual(self.store.timeline(self.store.key(folder))['duration'],5)
+        self.assertEqual(next(x for x in self.store.list() if x['kind']=='battle')['status'],'ended')
+        self.assertEqual(file.read_text(),original)
+
+    def test_closed_unfinished_battle_cannot_extend_to_another_hour(self):
+        self.stat['timeCostSeconds']=0
+        (self.root/'statistics.jsonl').write_text(json.dumps(self.stat)+'\n')
+        folder=self.root/'battles'/'unfinished';folder.mkdir(parents=True)
+        clock={'startObservedAt':'2026-01-01T00:00:05Z'}
+        (folder/'battle.json').write_text(json.dumps({'status':'active','clock':clock,'statistics':dict(self.stat,timeCostSeconds=0)}))
+        (self.root/'completion.json').write_text('{}')
+        self.append('damage-events.jsonl',{'observedAt':'2026-01-01T01:00:00Z','amount':999})
+        result=self.store.report(self.store.key(folder))
+        self.assertEqual(result['duration'],5);self.assertEqual(result['counts'].get('hit',0),0)
+        self.assertEqual(next(x for x in self.store.list() if x['kind']=='battle')['status'],'interrupted')
+
     def test_battle_filters_events_and_preserves_same_time_hits(self):
         folder = self.root / 'battles' / 'one'; folder.mkdir(parents=True)
         (folder / 'battle.json').write_text(json.dumps({'clock': {'startObservedAt': '2026-01-01T00:00:05Z', 'endObservedAt': '2026-01-01T00:00:10Z'}}))

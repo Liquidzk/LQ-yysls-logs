@@ -1,7 +1,7 @@
 """Real descriptor messages with fixed, independently extracted current indices."""
 import pathlib,sys,json,hashlib
 root=pathlib.Path(__file__).resolve().parents[1]
-sys.path.insert(0,str(root/'runtime/collector/tools'))
+sys.path.insert(0,str(root/'collector/tools'))
 sys.path.insert(0,str(root/'runtime/collector/evidence/p0/runtime-rpc-analysis/pydeps'))
 from google.protobuf import descriptor_pool,message_factory,json_format
 from p1_buff_stream import BuffStream
@@ -74,4 +74,16 @@ assert encounter.consume(message('AoiProp',{'guid':'20','props':[{**finish,'eid'
 assert encounter.consume(message('AoiProp',{'guid':'20','props':[{'path':[idx(2873)],**prop(2880,{'ivalue':9})}]}))==[]
 loaded=encounter.consume(space(b'completed-scene',21,True))
 assert any(e['kind']=='dungeon-finish-state' and e['finished'] and e['initial'] for e in loaded)
+# Recreating an unrelated NPC must not emit every historical dungeon roster.
+from p1_encounter_identity import EncounterIdentity
+identity=EncounterIdentity();named=lambda key:idx(identity.preset.indexes[key])
+roster=message('AreaCreateEntityMsg',{'name':b64encode(b'SpaceData').decode(),'id':b64encode(b'roster-space').decode(),'guid':'30','props':{'props':[
+ {'name':named('dungeon'),'dict':{'item':[{'name':named('npcs'),'dict':{'item':[{'name':raw('boss'),'value':{'ivalue':1}}]}}]}}
+]}})
+identity.consume(roster)
+boss=lambda number:message('AreaCreateEntityMsg',{'name':b64encode(b'Npc').decode(),'id':b64encode(b'boss').decode(),'guid':'31','props':{'props':[{'name':named('No'),'value':{'ivalue':number}}]}})
+assert len(identity.consume(boss(123)))==1
+assert identity.consume(boss(123))==[]
+assert identity.consume(npc)==[]
+assert len(identity.consume(boss(124)))==1
 print(json.dumps({'passed':True,'preset':stream.preset.id,'checks':['name','explicit-eid','team-names','identity-isolation','buff-fields','patch-state','remove','unresolved-guid-isolation','unknown-build-rejected']}))
