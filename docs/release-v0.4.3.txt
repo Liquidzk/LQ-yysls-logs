@@ -16,4 +16,4 @@
 发布包不含个人配置、战斗记录、角色缓存或连接状态。原来使用自定义目录时，可保留本机 desktop.local.json；不要把该文件公开上传。
 
 仍为测试版：完整队友 Buff、完整施法记录和 rDPS 尚未验证。KCP 持续在线采集验收状态与 0.4.2 相同。
-源码包包含 Kagerou 子模块；SHA256SUMS.txt 提供附件校验值。许可及构建说明见 README.txt、COPYING 和各组件声明。
+源码包包含 Kagerou 子模块；SHA256SUMS.txt 提供附件校验值。许可及构建说明见 README.md、COPYING 和各组件声明。

@@ -27,5 +27,5 @@ Windows x64 独立桌面客户端，手动选择游戏进程后开始采集；�
 源码
 LQ-yysls-logs-v0.4.2-source.zip 包含本项目及固定版本的 Kagerou 子模块源码。
 GitHub 自动生成的 Source code 压缩包不包含子模块内容；也可使用 git clone --recurse-submodules。
-名称映射、协议兼容资产和第三方运行时按 README.txt 说明在本机构建时准备。
+名称映射、协议兼容资产和第三方运行时按 README.md 说明在本机构建时准备。
 许可证：GPL-3.0-or-later；第三方声明随各组件提供。SHA256SUMS.txt 可校验发布附件。

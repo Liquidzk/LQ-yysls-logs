@@ -30,7 +30,7 @@ for (const item of ['tools', 'config']) fs.cpSync(path.join(root, 'collector', i
   for (const output of outputs) {
     require('./write-diagnostic-launcher.cjs').writeDiagnosticLauncher(output)
     if (fs.existsSync(path.join(root, 'desktop.local.json'))) fs.copyFileSync(path.join(root, 'desktop.local.json'), path.join(output, 'desktop.local.json'))
-    fs.copyFileSync(path.join(root, 'docs/客户端使用说明.txt'), path.join(output, '使用说明.txt'))
+    fs.copyFileSync(path.join(root, 'docs/客户端使用说明.md'), path.join(output, '使用说明.md'))
   }
   console.log(outputs.join('\n'))
 })().catch(error => { console.error(error); process.exitCode = 1 })

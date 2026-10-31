@@ -26,7 +26,7 @@ def sha256(file):
 def public_files(build):
     # Only the shipped program trees are candidates. Never copy an entire worktree.
     roots = {'locales', 'resources'}
-    files = {'燕云Logs.exe', '检查当前游戏版本.cmd', '使用说明.txt',
+    files = {'燕云Logs.exe', '检查当前游戏版本.cmd', '使用说明.md',
              'LICENSE', 'LICENSES.chromium.html', 'version',
              'chrome_100_percent.pak', 'chrome_200_percent.pak', 'resources.pak',
              'd3dcompiler_47.dll', 'dxcompiler.dll', 'electron_wer.dll',
