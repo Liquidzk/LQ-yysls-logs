@@ -2,7 +2,7 @@
 
 ## 直接使用
 
-从 [Releases](https://github.com/Liquidzk/LQ-yysls-logs/releases) 下载 `win-x64.zip` 客户端压缩包，完整解压后运行 `燕云Logs.exe` 即可，无需自行构建。各功能操作见[客户端使用说明](docs/客户端使用说明.md)。
+从[最新版下载页](https://github.com/Liquidzk/LQ-yysls-logs/releases/latest) 下载 `win-x64.zip` 客户端压缩包，完整解压后运行 `燕云Logs.exe` 即可，无需自行构建。各功能操作见[客户端使用说明](docs/客户端使用说明.md)。
 
 ## 构建（Windows x64）
 
