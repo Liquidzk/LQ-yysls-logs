@@ -1,5 +1,6 @@
 # 燕云 Logs
 
+移步 https://yylogs.dreemurr.net/
 ## 直接使用
 
 仅使用的话，从[最新版下载页](https://github.com/Liquidzk/LQ-yysls-logs/releases/latest) 下载 `win-x64.zip` 客户端压缩包，完整解压后，安装 Npcap，**以管理员身份运行** `燕云Logs.exe` 即可，无需自行构建。各功能操作见压缩包内的 `使用说明.md`。
